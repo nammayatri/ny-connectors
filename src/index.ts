@@ -361,6 +361,9 @@ class NammaYatriMCPServer {
   private server: Server;
   // Session management: keyed by obfuscated token (what user receives)
   private sessions: Map<string, SessionData> = new Map();
+  // Active SSE connections: keyed by connection ID
+  private activeConnections: Map<string, { transport: SSEServerTransport; res: any; keepAliveInterval: NodeJS.Timeout }> = new Map();
+  private connectionCounter = 0;
 
   constructor() {
     this.server = new Server(
@@ -1581,24 +1584,87 @@ class NammaYatriMCPServer {
 
       // SSE endpoint - establish SSE connection
       if (req.method === "GET" && url.pathname === SSE_ENDPOINT) {
-        console.error(`[HTTP] SSE connection request from ${req.headers.host || "unknown"}`);
+        const connectionId = `conn_${++this.connectionCounter}_${Date.now()}`;
+        console.error(`[HTTP] SSE connection request from ${req.headers.host || "unknown"} (connection: ${connectionId})`);
+        
+        // Set SSE headers
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+        
+        // Set keep-alive timeout (30 seconds between heartbeats)
+        const KEEP_ALIVE_INTERVAL = 25000; // 25 seconds
+        
         const transport = new SSEServerTransport(MESSAGE_ENDPOINT, res, {
           enableDnsRebindingProtection: false, // Set to true and configure allowedHosts/allowedOrigins for production
         });
         
-        this.currentTransport = transport;
-        // Note: connect() automatically calls start(), so we don't need to call start() again
-        await this.server.connect(transport);
-        console.error("[HTTP] SSE connection established");
+        // Setup keep-alive heartbeat
+        const keepAliveInterval = setInterval(() => {
+          try {
+            if (!res.destroyed && !res.closed) {
+              res.write(": keepalive\n\n");
+            } else {
+              clearInterval(keepAliveInterval);
+            }
+          } catch (error) {
+            console.error(`[HTTP] Keep-alive error for ${connectionId}:`, error);
+            clearInterval(keepAliveInterval);
+          }
+        }, KEEP_ALIVE_INTERVAL);
+        
+        // Store connection
+        this.activeConnections.set(connectionId, { transport, res, keepAliveInterval });
+        
+        // Handle connection close/error
+        req.on("close", () => {
+          console.error(`[HTTP] SSE connection closed for ${connectionId}`);
+          this.cleanupConnection(connectionId);
+        });
+        
+        req.on("error", (error) => {
+          console.error(`[HTTP] SSE connection error for ${connectionId}:`, error);
+          this.cleanupConnection(connectionId);
+        });
+        
+        res.on("close", () => {
+          console.error(`[HTTP] SSE response closed for ${connectionId}`);
+          this.cleanupConnection(connectionId);
+        });
+        
+        res.on("error", (error) => {
+          console.error(`[HTTP] SSE response error for ${connectionId}:`, error);
+          this.cleanupConnection(connectionId);
+        });
+        
+        try {
+          // Note: connect() automatically calls start(), so we don't need to call start() again
+          await this.server.connect(transport);
+          console.error(`[HTTP] SSE connection established for ${connectionId}`);
+        } catch (error) {
+          console.error(`[HTTP] Error establishing SSE connection for ${connectionId}:`, error);
+          this.cleanupConnection(connectionId);
+          if (!res.headersSent) {
+            res.writeHead(500).end("Connection error");
+          }
+        }
         return;
       }
 
       // Message endpoint - handle POST messages
       if (req.method === "POST" && url.pathname.startsWith(MESSAGE_ENDPOINT)) {
-        if (!this.currentTransport) {
-          res.writeHead(400).end("SSE connection not established");
+        // Try to find an active connection
+        // If multiple connections exist, use the most recent one
+        const connections = Array.from(this.activeConnections.values());
+        if (connections.length === 0) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "SSE connection not established" }));
           return;
         }
+
+        // Use the most recent connection (last one in the map)
+        const { transport } = connections[connections.length - 1];
 
         try {
           // Read request body
@@ -1614,11 +1680,12 @@ class NammaYatriMCPServer {
             parsedBody = body;
           }
 
-          await this.currentTransport.handlePostMessage(req, res, parsedBody);
+          await transport.handlePostMessage(req, res, parsedBody);
         } catch (error) {
           console.error(`[HTTP] Error handling POST message: ${(error as Error).message}`);
           if (!res.headersSent) {
-            res.writeHead(500).end("Internal server error");
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Internal server error" }));
           }
         }
         return;
@@ -1649,9 +1716,46 @@ class NammaYatriMCPServer {
         reject(error);
       });
     });
+
+    // Graceful shutdown
+    process.on("SIGTERM", () => {
+      console.error("[HTTP] SIGTERM received, shutting down gracefully...");
+      this.shutdown();
+    });
+
+    process.on("SIGINT", () => {
+      console.error("[HTTP] SIGINT received, shutting down gracefully...");
+      this.shutdown();
+    });
   }
 
-  private currentTransport: SSEServerTransport | null = null;
+  private shutdown(): void {
+    console.error(`[HTTP] Closing ${this.activeConnections.size} active connections...`);
+    for (const connectionId of this.activeConnections.keys()) {
+      this.cleanupConnection(connectionId);
+    }
+    process.exit(0);
+  }
+
+  // ============================================================================
+  // Connection Management
+  // ============================================================================
+
+  private cleanupConnection(connectionId: string): void {
+    const connection = this.activeConnections.get(connectionId);
+    if (connection) {
+      clearInterval(connection.keepAliveInterval);
+      try {
+        if (!connection.res.destroyed && !connection.res.closed) {
+          connection.res.end();
+        }
+      } catch (error) {
+        // Ignore errors when closing
+      }
+      this.activeConnections.delete(connectionId);
+      console.error(`[HTTP] Cleaned up connection ${connectionId}`);
+    }
+  }
 
   // ============================================================================
   // Token Obfuscation/Deobfuscation
