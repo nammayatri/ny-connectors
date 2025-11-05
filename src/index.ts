@@ -411,7 +411,7 @@ class NammaYatriMCPServer {
         {
           name: "get_places",
           description:
-            "Searches for places using autocomplete. Returns list of matching addresses. IMPORTANT: Show the list of results to the user and let them select the most appropriate one. Do not automatically choose the first result. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate. The token file is stored locally by the user, not on the remote server.",
+            "Searches for places using autocomplete. Returns list of matching addresses. CRITICAL: You MUST present ALL results to the user as a numbered list (1, 2, 3, etc.) and ask them to choose which place they want. DO NOT automatically select the first result or any result without explicit user confirmation. Wait for the user to tell you which number/option they want before proceeding. Only after the user selects a specific option should you call get_place_details with the chosen placeId. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate. The token file is stored locally by the user, not on the remote server.",
           inputSchema: {
             type: "object",
             properties: {
@@ -819,11 +819,49 @@ class NammaYatriMCPServer {
       args.token
     );
 
+    // Format response to make it clear that user should choose
+    const predictions = response.predictions || [];
+    
+    if (predictions.length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "No places found matching your search. Please try a different search term.",
+          },
+        ],
+      };
+    }
+
+    // Format predictions as a numbered list with clear instructions
+    let formattedText = `Found ${predictions.length} place(s) matching "${args.searchText}":\n\n`;
+    formattedText += "**IMPORTANT: Please review the options below and tell me which number you'd like to select.**\n\n";
+    
+    predictions.forEach((prediction, index) => {
+      const number = index + 1;
+      formattedText += `${number}. ${prediction.description || prediction.placeId}\n`;
+      if (prediction.placeId) {
+        formattedText += `   Place ID: ${prediction.placeId}\n`;
+      }
+      if (prediction.distanceWithUnit) {
+        formattedText += `   Distance: ${prediction.distanceWithUnit.value} ${prediction.distanceWithUnit.unit}\n`;
+      } else if (prediction.distance !== undefined) {
+        formattedText += `   Distance: ${prediction.distance} meters\n`;
+      }
+      formattedText += "\n";
+    });
+
+    formattedText += "\n**Please tell me which number (1-" + predictions.length + ") you want to select, or say 'none' if none of these match.**\n";
+    formattedText += "\nDo NOT proceed automatically. Wait for the user's explicit choice before calling get_place_details.\n";
+
+    // Also include raw JSON for reference
+    formattedText += `\n\n---\nRaw response data (for reference):\n\`\`\`json\n${JSON.stringify(response, null, 2)}\n\`\`\``;
+
     return {
       content: [
         {
           type: "text" as const,
-          text: JSON.stringify(response, null, 2),
+          text: formattedText,
         },
       ],
     };
