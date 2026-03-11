@@ -341,6 +341,32 @@ interface FetchStatusResponse {
   list: RideBooking[];
 }
 
+// Saved Locations Types
+interface GetSavedLocationsArgs {
+  token: string; // Obfuscated token from get_token response
+}
+
+interface SavedReqLocationAPIEntity {
+  lat: number;
+  lon: number;
+  tag: string;
+  area?: string;
+  areaCode?: string;
+  building?: string;
+  city?: string;
+  country?: string;
+  door?: string;
+  locationName?: string;
+  placeId?: string;
+  state?: string;
+  street?: string;
+  ward?: string;
+}
+
+interface SavedReqLocationsListRes {
+  list: SavedReqLocationAPIEntity[];
+}
+
 // ============================================================================
 // Namma Yatri MCP Server
 // ============================================================================
@@ -388,7 +414,7 @@ class NammaYatriMCPServer {
         {
           name: "get_token",
           description:
-            "Authenticates user with Namma Yatri and stores auth token for subsequent requests",
+            "Authenticates user with Namma Yatri and stores auth token for subsequent requests. If the user does not know their access code, tell them: 'You can find your access code in the Namma Yatri app under the About Us section.'",
           inputSchema: {
             type: "object",
             properties: {
@@ -402,7 +428,7 @@ class NammaYatriMCPServer {
               },
               accessCode: {
                 type: "string",
-                description: "App secret access code",
+                description: "App secret access code. Found in the Namma Yatri app under About Us section.",
               },
             },
             required: ["country", "mobileNumber", "accessCode"],
@@ -466,7 +492,7 @@ class NammaYatriMCPServer {
         {
           name: "search_ride",
           description:
-            "Searches for available rides between origin and destination. Polls for results until estimates are available. IMPORTANT: Always show the list of available estimates (with fare, vehicle type, etc.) to the user and ask them to select which estimate(s) they want to book. Users can choose 1 or more estimates. Do NOT automatically choose an estimate unless the user explicitly instructs you to be strict/auto-select. Parameters: originLat (number or 'lat,lon' string), originLon (number, optional if originLat is string), originAddress (object from get_place_details response), destinationLat (number or 'lat,lon' string), destinationLon (number, optional if destinationLat is string), destinationAddress (object from get_place_details response). For place name searches: Use get_places to show list, then get_place_details for selected place. For direct lat/lon: Call get_place_details with lat/lon to get address object. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate. The token file is stored locally by the user, not on the remote server.",
+            "Searches for available rides between origin and destination. Polls for results until estimates are available. IMPORTANT: Always show the list of available estimates (with fare, vehicle type, etc.) to the user and ask them to select which estimate(s) they want to book. Users can choose 1 or more estimates. Do NOT automatically choose an estimate unless the user explicitly instructs you to be strict/auto-select. SAVED LOCATIONS FLOW: Before looking up places, read ~/.namma-yatri-mcp/user-token.json and check 'savedLocations'. Step 1: If 'savedLocationsUpdatedAt' is older than 24 hours, silently call get_saved_locations first to refresh, update the file, then proceed. Step 2: For each location (origin/destination), check if it matches a saved location tag (case-insensitive). If found, use that entry's lat/lon/address directly — skip get_places/get_place_details. Step 3: If a location name sounds like a personal saved location (e.g., 'home', 'work', 'office', 'gym') but is NOT in savedLocations, silently call get_saved_locations to refresh and check again. If still not found after refresh, fall back to get_places. Step 4: For locations not in savedLocations and not personal-sounding, use get_places as normal. Parameters: originLat (number or 'lat,lon' string), originLon (number, optional if originLat is string), originAddress (object from get_place_details response or savedLocations entry), destinationLat (number or 'lat,lon' string), destinationLon (number, optional if destinationLat is string), destinationAddress (object from get_place_details response or savedLocations entry). TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate. The token file is stored locally by the user, not on the remote server.",
           inputSchema: {
             type: "object",
             properties: {
@@ -650,6 +676,21 @@ class NammaYatriMCPServer {
             },
           },
         },
+        {
+          name: "get_saved_locations",
+          description:
+            "Retrieves the user's saved locations (e.g., Home, Work) from the Namma Yatri API. These can be used directly as origin or destination in search_ride without needing get_places/get_place_details. Saved locations are fetched during authentication and cached in ~/.namma-yatri-mcp/user-token.json with a 'savedLocationsUpdatedAt' timestamp. WHEN TO CALL THIS TOOL: (1) DAILY REFRESH: If 'savedLocationsUpdatedAt' in the token file is older than 24 hours, call this tool silently at the start of the session to refresh — do NOT ask the user. (2) USER REQUEST: When the user explicitly asks to refresh or update saved locations. (3) SMART DETECT: When a user mentions a location name that sounds like it could be a saved location (e.g., 'home', 'work', 'office', 'gym', 'mom\'s place') but it is NOT in the local savedLocations list — silently call this tool to check if it was recently added, then update the local file. Do NOT ask the user before refreshing in this case. After calling, update BOTH the 'savedLocations' array AND the 'savedLocationsUpdatedAt' timestamp in ~/.namma-yatri-mcp/user-token.json. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: {
+                type: "string",
+                description: "Obfuscated token from get_token response",
+              },
+            },
+            required: ["token"],
+          },
+        },
       ];
 
       return { tools };
@@ -692,6 +733,11 @@ class NammaYatriMCPServer {
           case "fetch_status":
             return await this.handleFetchStatus(
               args as unknown as FetchStatusArgs
+            );
+
+          case "get_saved_locations":
+            return await this.handleGetSavedLocations(
+              args as unknown as GetSavedLocationsArgs
             );
 
           default:
@@ -740,17 +786,36 @@ class NammaYatriMCPServer {
 
     // Store token securely and create session
     console.error("[AUTH] Response: ", response);
+    let obfuscatedToken: string | undefined;
     if (response.token) {
       const realToken = response.token;
-      
+
       // Obfuscate token for user
-      const obfuscatedToken = this.obfuscateToken(realToken);
-      
+      obfuscatedToken = this.obfuscateToken(realToken);
+
       // Create session with real token
       this.createSession(obfuscatedToken, realToken);
-      
+
       console.error("[AUTH] Token obfuscated and session created");
       console.error(`[AUTH] Obfuscated token (use this in future calls): ${obfuscatedToken.substring(0, 20)}...`);
+    }
+
+    // Fetch saved locations immediately after authentication
+    let savedLocations: SavedReqLocationAPIEntity[] = [];
+    if (obfuscatedToken) {
+      try {
+        const savedLocationsResponse = await this.makeApiCall<SavedReqLocationsListRes>(
+          "/savedLocation/list",
+          "GET",
+          undefined,
+          true,
+          obfuscatedToken
+        );
+        savedLocations = savedLocationsResponse.list || [];
+        console.error(`[AUTH] Fetched ${savedLocations.length} saved location(s) for user`);
+      } catch (error) {
+        console.error(`[AUTH] Failed to fetch saved locations: ${(error as Error).message}`);
+      }
     }
 
     // Return obfuscated token to user with clear instructions to save locally
@@ -762,23 +827,29 @@ class NammaYatriMCPServer {
           text: JSON.stringify(
             {
               authenticated: !!response.token,
-              obfuscatedToken: response.token ? this.obfuscateToken(response.token) : undefined,
+              obfuscatedToken: obfuscatedToken,
               authId: response.authId,
               attempts: response.attempts,
               authType: response.authType,
               person: response.person,
               isPersonBlocked: response.isPersonBlocked,
+              savedLocations: savedLocations,
               instructions: [
-                "IMPORTANT: You MUST save the obfuscatedToken to your local filesystem for future use.",
-                `Save the token to: ${localTokenPath}`,
-                "The file should contain JSON: { \"token\": \"<obfuscated-token-value>\" }",
+                "IMPORTANT: You MUST save the tokenFileContent below to your local filesystem for future use.",
+                `Save to: ${localTokenPath}`,
                 "Use your file writing capabilities to create this file on the user's local machine.",
+                "The file contains the token, the user's saved locations, and a 'savedLocationsUpdatedAt' timestamp.",
                 "For all future tool calls, read the token from this local file first.",
                 "If the file doesn't exist, call get_token again to authenticate.",
+                "SAVED LOCATIONS USAGE: When the user asks to book a ride from A to B, check 'savedLocations' in this file. If A or B matches a tag (case-insensitive), use that location's lat/lon/address directly — skip get_places/get_place_details.",
+                "DAILY REFRESH: At the start of each session, if 'savedLocationsUpdatedAt' is older than 24 hours, silently call get_saved_locations to refresh and update the file. Do NOT ask the user.",
+                "SMART DETECT: If a location sounds like a personal saved location (home, work, office, etc.) but is NOT in savedLocations, silently call get_saved_locations to check for new entries before falling back to get_places.",
               ],
-              tokenFileContent: response.token ? {
-                token: this.obfuscateToken(response.token),
+              tokenFileContent: obfuscatedToken ? {
+                token: obfuscatedToken,
                 savedAt: new Date().toISOString(),
+                savedLocations: savedLocations,
+                savedLocationsUpdatedAt: new Date().toISOString(),
               } : undefined,
             },
             null,
@@ -1460,6 +1531,68 @@ class NammaYatriMCPServer {
         {
           type: "text" as const,
           text: JSON.stringify(response, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleGetSavedLocations(args: GetSavedLocationsArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const response = await this.makeApiCall<SavedReqLocationsListRes>(
+      "/savedLocation/list",
+      "GET",
+      undefined,
+      true,
+      args.token
+    );
+
+    const locations = response.list || [];
+    const now = new Date().toISOString();
+
+    if (locations.length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              savedLocations: [],
+              savedLocationsUpdatedAt: now,
+              instructions: "No saved locations found. Update ~/.namma-yatri-mcp/user-token.json: set 'savedLocations' to [] and 'savedLocationsUpdatedAt' to '" + now + "'.",
+            }, null, 2),
+          },
+        ],
+      };
+    }
+
+    let formattedText = `Found ${locations.length} saved location(s):\n\n`;
+
+    locations.forEach((loc, index) => {
+      const number = index + 1;
+      formattedText += `${number}. **${loc.tag}**`;
+      if (loc.locationName) {
+        formattedText += ` - ${loc.locationName}`;
+      }
+      formattedText += `\n`;
+      const addressParts = [loc.building, loc.door, loc.street, loc.area, loc.city, loc.state, loc.country].filter(Boolean);
+      if (addressParts.length > 0) {
+        formattedText += `   Address: ${addressParts.join(", ")}\n`;
+      }
+      formattedText += `   Coordinates: ${loc.lat}, ${loc.lon}\n`;
+      if (loc.placeId) {
+        formattedText += `   Place ID: ${loc.placeId}\n`;
+      }
+      formattedText += "\n";
+    });
+
+    formattedText += `\nACTION REQUIRED: Read ~/.namma-yatri-mcp/user-token.json, replace the 'savedLocations' field with the array below, set 'savedLocationsUpdatedAt' to '${now}', and write the file back. Do this silently without telling the user.\n`;
+    formattedText += `\n---\nupdatedSavedLocations:\n\`\`\`json\n${JSON.stringify({ savedLocations: locations, savedLocationsUpdatedAt: now }, null, 2)}\n\`\`\``;
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: formattedText,
         },
       ],
     };
