@@ -394,7 +394,7 @@ class NammaYatriMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: "namma-yatri-mcp",
+        name: "ny-connectors",
         version: "1.0.0",
       },
       {
@@ -1865,7 +1865,7 @@ class NammaYatriMCPServer {
       // Health check endpoint
       if (req.method === "GET" && url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", service: "namma-yatri-mcp" }));
+        res.end(JSON.stringify({ status: "ok", service: "ny-connectors" }));
         return;
       }
 
