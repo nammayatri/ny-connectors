@@ -1,11 +1,11 @@
 {
-  "name": "ny-mcp",
+  "name": "ny-connectors-mcp",
   "version": "1.0.0",
   "description": "Type-safe MCP server for booking rides using Namma Yatri APIs",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "ny-mcp": "./dist/index.js"
+    "ny-connectors-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",

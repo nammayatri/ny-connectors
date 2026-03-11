@@ -4,44 +4,70 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ny-mcp is a TypeScript MCP (Model Context Protocol) server for booking rides via Namma Yatri APIs. It exposes 9 tools (get_token, get_places, get_place_details, search_ride, add_tip, select_estimate, cancel_search, fetch_status, get_saved_locations) that allow AI assistants to interact with the Namma Yatri ride-booking platform.
+ny-connectors is a multi-interface toolkit for booking rides via Namma Yatri APIs. It provides three ways to interact with the platform:
 
-## Build & Run Commands
+1. **MCP Server** (`mcp/`) — TypeScript MCP server exposing 9 tools for AI assistants
+2. **CLI** (`cli/`) — Bash CLI tool (`ny-cli`) for terminal-based ride booking
+3. **Skill** (`skill.md`) — Curl-based skill file for LLM tools that don't support MCP (e.g., openClaw)
 
-- **Build**: `npm run build` (runs `tsc`, outputs to `dist/`)
-- **Dev**: `npm run dev` (runs `tsx src/index.ts` directly)
-- **Start**: `npm start` (runs compiled `node dist/index.js`)
-- **Watch**: `npm run watch` (continuous TypeScript compilation)
+## Repository Structure
+
+```
+ny-connectors/
+├── mcp/                    # MCP server (TypeScript)
+│   ├── src/index.ts        # All server code (~2000 lines)
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── Dockerfile
+├── cli/
+│   └── ny-cli.sh           # Bash CLI tool
+├── skill.md                # LLM skill file (curl-based)
+├── install.sh              # CLI installer (curl | sh)
+├── .github/workflows/      # CI/CD
+└── README.md
+```
+
+## Build & Run Commands (MCP)
+
+All commands run from the `mcp/` directory:
+
+- **Build**: `cd mcp && npm run build` (runs `tsc`, outputs to `mcp/dist/`)
+- **Dev**: `cd mcp && npm run dev` (runs `tsx src/index.ts` directly)
+- **Start**: `cd mcp && npm start` (runs compiled `node dist/index.js`)
+- **Watch**: `cd mcp && npm run watch` (continuous TypeScript compilation)
+
+## CLI
+
+Install: `curl -sSL https://raw.githubusercontent.com/nammayatri/ny-connectors/main/install.sh | sh`
+
+Run: `ny-cli help` for all subcommands.
 
 No test or lint commands are configured.
 
-## Architecture
+## Architecture (MCP)
 
-All code lives in a single file: `src/index.ts` (~1900 lines). It is organized into these layers:
+All MCP code lives in `mcp/src/index.ts`. Organized into:
 
-1. **Configuration** (top) — API base URL (sandbox by default), polling intervals, HTTP server config, token storage paths (`~/.namma-yatri-mcp/`)
-2. **Type definitions** — Comprehensive TypeScript interfaces for all Namma Yatri API request/response shapes; discriminated unions for enums like `AutoCompleteType` and `ServiceTierType`
-3. **`NammaYatriMCPServer` class** — The core server:
-   - **Session management** via `sessions: Map` and `activeConnections: Map` — maps obfuscated tokens to real tokens in memory so real tokens are never exposed to the LLM
-   - **MCP request handlers** — `ListToolsRequestSchema` returns tool definitions; `CallToolRequestSchema` routes to individual tool handlers
-   - **Tool handlers** — Each of the 8 tools has a dedicated handler method (e.g., `handleSearchRide()`, `handleSelectEstimate()`)
-   - **Helpers** — `makeApiCall<T>()` generic API client with auth headers, `pollSearchResults()` / `pollForRideAssignment()` for automatic polling, coordinate parsing utilities
-4. **HTTP server** (bottom) — Express-less raw HTTP with SSE transport (`/sse`, `/message`, `/health`), keep-alive heartbeats (25s), CORS, graceful shutdown
+1. **Configuration** (top) — API base URL, polling intervals, HTTP server config, token storage paths (`~/.namma-yatri-mcp/`)
+2. **Type definitions** — TypeScript interfaces for all API request/response shapes
+3. **`NammaYatriMCPServer` class** — The core server with session management, tool handlers, and API helpers
+4. **HTTP server** (bottom) — Raw HTTP with SSE transport (`/sse`, `/message`, `/health`), keep-alive heartbeats (25s), CORS, graceful shutdown
 
 ## Key Design Patterns
 
-- **Token obfuscation**: Real API tokens are stored server-side in a session map. Only obfuscated tokens are returned to the LLM client. See `obfuscateToken()` / `deobfuscateTokenSimple()` / `createSession()` / `ensureAuthenticated()`.
-- **Automatic polling**: `search_ride` and `select_estimate` poll the Namma Yatri API at 2-second intervals (10s max for estimates, 30s max for driver assignment) rather than requiring the client to poll.
-- **Generic API wrapper**: All Namma Yatri API calls go through `makeApiCall<T>()` which handles auth headers, error responses, and typing.
-- **Dual transport**: Supports both stdio (default, for Claude Desktop) and HTTP/SSE transport modes.
-- **Saved locations with smart caching**: On authentication, `handleGetToken` fetches saved locations from `/savedLocation/list` and bundles them into the token file (`~/.namma-yatri-mcp/user-token.json`) alongside a `savedLocationsUpdatedAt` timestamp. The LLM is instructed to: (1) use cached saved locations to skip place lookups when origin/destination matches a tag, (2) silently refresh via `get_saved_locations` if the cache is older than 24 hours, (3) silently refresh if a user mentions a personal-sounding location (home, work, etc.) not in the cache — before falling back to `get_places`.
+- **Token obfuscation**: Real API tokens are stored server-side in a session map. Only obfuscated tokens are returned to the LLM client.
+- **Automatic polling**: `search_ride` and `select_estimate` poll at 2-second intervals (10s max for estimates, 30s max for driver assignment).
+- **Generic API wrapper**: All API calls go through `makeApiCall<T>()` with auth headers, error handling, and typing.
+- **Dual transport**: Supports both stdio (Claude Desktop) and HTTP/SSE transport modes.
+- **Saved locations with smart caching**: Cached in `~/.namma-yatri-mcp/user-token.json` with silent 24-hour refresh.
 
 ## API Target
 
-All API calls go to `https://api.sandbox.moving.tech/dev/app/v2`. Key endpoints: `/auth/get-token`, `/maps/autoComplete`, `/maps/getPlaceName`, `/rideSearch`, `/rideSearch/{id}/results`, `/estimate/{id}/select2`, `/estimate/{id}/cancelSearch`, `/rideBooking/list`, `/savedLocation/list`.
+MCP server: `https://api.sandbox.moving.tech/dev/app/v2` (configurable via `NAMMA_YATRI_API_BASE` env var)
+CLI/Skill: `https://api.moving.tech/app/pilot/v2` (configurable via `NY_API_BASE` env var)
 
 ## Deployment
 
-- **Docker**: Multi-stage build (`node:20-alpine`), builds for `linux/amd64` and `linux/arm64`, runs as non-root user, exposes port 3000
-- **CI**: GitHub Actions workflow (`.github/workflows/docker-build-simple.yml`) builds and pushes to GHCR on pushes to main and version tags
-- **Environment variables**: `PORT` (default 3000), `HOST` (default 0.0.0.0), `NODE_EXTRA_CA_CERTS` (set in Docker for custom CA)
+- **Docker (MCP)**: Multi-stage build (`node:20-alpine`), Dockerfile in `mcp/`, image name `nammayatri/ny-mcp`
+- **CI**: GitHub Actions builds from `./mcp` context, pushes to GHCR
+- **CLI install**: `curl -sSL https://raw.githubusercontent.com/nammayatri/ny-connectors/main/install.sh | sh`
