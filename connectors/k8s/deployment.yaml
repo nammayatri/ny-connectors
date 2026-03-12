@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: message-gateway
+  labels:
+    app: message-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: message-gateway
+  template:
+    metadata:
+      labels:
+        app: message-gateway
+    spec:
+      containers:
+        - name: message-gateway
+          image: message-gateway:latest
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: message-gateway-config
+            - secretRef:
+                name: message-gateway-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

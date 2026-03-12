@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: message-gateway-config
+data:
+  PORT: "3000"
+  WEBHOOK_URL: "http://your-destination-service/incoming"

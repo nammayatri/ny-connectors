@@ -12,6 +12,7 @@ dist/
 .idea/
 *.swp
 *.swo
+*node_modules
 
 # OS
 .DS_Store
