@@ -306,6 +306,180 @@ Optional query parameters:
 
 ---
 
+### 10. Get Cancellation Reasons (`get_cancellation_reasons`)
+
+Fetches the list of valid cancellation reasons for a given stage. This is a prerequisite for cancelling a confirmed booking.
+
+```bash
+curl -s -X GET "https://api.moving.tech/pilot/app/v2/cancellationReason/list?cancellationStage=<STAGE>" \
+  -H "Content-Type: application/json" \
+  -H "token: <TOKEN>"
+```
+
+**Stage values**: `OnSearch`, `OnInit`, `OnConfirm`, `OnAssign`
+
+- Use `OnConfirm` for cancelling a confirmed booking before a driver is assigned.
+- Use `OnAssign` for cancelling after a driver has been assigned.
+
+**Response**: `[ { "reasonCode": "<CODE>", "description": "<DESCRIPTION>" }, ... ]`
+
+**Example**: To cancel a confirmed booking, first call with `cancellationStage=OnConfirm` to get valid reason codes, then use one of those codes in the cancel booking call.
+
+---
+
+### 11. Cancel Booked Ride (`cancel_booking`)
+
+Cancels a **confirmed** ride booking. This is different from `cancel_search` (action 8) which cancels a search/estimate — this cancels an actual confirmed booking.
+
+**Step 1** — Get valid cancellation reasons (see action 10 above). Use `OnConfirm` if no driver assigned, `OnAssign` if a driver is assigned.
+
+**Step 2** — Cancel the booking:
+
+```bash
+curl -s -X POST "https://api.moving.tech/pilot/app/v2/rideBooking/<BOOKING_ID>/cancel" \
+  -H "Content-Type: application/json" \
+  -H "token: <TOKEN>" \
+  -d '{
+    "reasonCode": "<CANCELLATION_REASON_CODE>",
+    "reasonStage": "<STAGE>"
+  }'
+```
+
+**Required fields**:
+- `reasonCode` — a valid code from the cancellation reasons list
+- `reasonStage` — one of `OnSearch`, `OnInit`, `OnConfirm`, `OnAssign`
+
+**Optional fields**:
+- `additionalInfo` — free-text additional reason
+- `reallocate` — boolean, whether to try reallocating to another driver (only for `OnAssign` stage)
+
+**Response**: `{ "result": "Success" }` on success.
+
+If this fails:
+- 401 — sign-in expired, ask user to sign in again.
+- 404 — booking not found.
+- 400 — booking can't be cancelled in its current state.
+
+---
+
+### 12. Get Booking Details (`get_booking_details`)
+
+Fetches full details of a specific booking by its booking ID. Returns driver info, vehicle info, fare, route, status, OTP, etc.
+
+```bash
+curl -s -X GET "https://api.moving.tech/pilot/app/v2/rideBooking/v2/<BOOKING_ID>" \
+  -H "Content-Type: application/json" \
+  -H "token: <TOKEN>"
+```
+
+**Response**: Contains booking status, ride details, driver info, and more:
+```json
+{
+  "id": "<BOOKING_ID>",
+  "bookingStatus": "CONFIRMED|TRIP_ASSIGNED|COMPLETED|CANCELLED|...",
+  "isBookingUpdated": false,
+  "rideStatus": "NEW|INPROGRESS|COMPLETED|CANCELLED|...",
+  "talkedWithDriver": false,
+  "stopInfo": [],
+  "isSafetyPlus": false,
+  "driverArrivalTime": "<ISO_TIMESTAMP>",
+  "estimatedEndTimeRange": { ... }
+}
+```
+
+Use this to check detailed status of a booking after it's been confirmed.
+
+---
+
+### 13. Get Ride Status (`get_ride_status`)
+
+Gets real-time status of an active ride, including driver position. This is different from the booking list (action 9) — it provides live tracking info for a specific ride.
+
+```bash
+curl -s -X GET "https://api.moving.tech/pilot/app/v2/ride/<RIDE_ID>/status" \
+  -H "Content-Type: application/json" \
+  -H "token: <TOKEN>"
+```
+
+**Response**:
+```json
+{
+  "ride": {
+    "id": "<RIDE_ID>",
+    "status": "NEW|INPROGRESS|COMPLETED|CANCELLED",
+    "rideOtp": "<OTP>",
+    "driverName": "<NAME>",
+    "vehicleNumber": "<NUMBER>",
+    "vehicleModel": "<MODEL>",
+    "vehicleColor": "<COLOR>",
+    "rideStartTime": "<ISO_TIMESTAMP>",
+    "rideEndTime": "<ISO_TIMESTAMP>",
+    "computedPrice": <AMOUNT>,
+    ...
+  },
+  "fromLocation": { "lat": <LAT>, "lon": <LON>, ... },
+  "toLocation": { "lat": <LAT>, "lon": <LON>, ... },
+  "driverPosition": { "lat": <LAT>, "lon": <LON> },
+  "customer": { "id": "...", "firstName": "...", ... }
+}
+```
+
+Use this for live ride tracking — the `driverPosition` field shows the driver's current location.
+
+---
+
+### 14. Post-Ride Tip (`post_ride_tip`)
+
+Adds a tip **after** a ride has been completed. This is different from the pre-ride tip (action 7) which is sent with the estimate selection.
+
+```bash
+curl -s -X POST "https://api.moving.tech/pilot/app/v2/payment/<RIDE_ID>/addTip" \
+  -H "Content-Type: application/json" \
+  -H "token: <TOKEN>" \
+  -d '{
+    "amount": {
+      "amount": <TIP_AMOUNT>,
+      "currency": "<CURRENCY>"
+    }
+  }'
+```
+
+Default currency is "INR" if the user doesn't specify.
+
+**Response**: `{ "result": "Success" }` on success.
+
+If this fails:
+- 404 — ride not found.
+- 400 — tip can't be added (ride not completed, or tip already added).
+
+---
+
+### 15. Get Fare/Price Breakdown (`get_price_breakdown`)
+
+Shows a detailed fare breakdown for a specific booking — base fare, distance charge, time charge, surge, tolls, etc.
+
+```bash
+curl -s -X GET "https://api.moving.tech/pilot/app/v2/priceBreakup?bookingId=<BOOKING_ID>" \
+  -H "Content-Type: application/json" \
+  -H "token: <TOKEN>"
+```
+
+**Response**:
+```json
+{
+  "quoteBreakup": [
+    { "title": "Base Fare", "priceWithCurrency": { "amount": <AMOUNT>, "currency": "<CURRENCY>" } },
+    { "title": "Distance Charge", "priceWithCurrency": { "amount": <AMOUNT>, "currency": "<CURRENCY>" } },
+    { "title": "Toll Charges", "priceWithCurrency": { "amount": <AMOUNT>, "currency": "<CURRENCY>" } },
+    ...
+  ]
+}
+```
+
+Present the breakdown as a clear itemized list to the user.
+
+---
+
 ## How to Book a Ride (Step by Step)
 
 1. **Check sign-in**: If the token file exists, the user is signed in. If not, help them sign in.
@@ -314,9 +488,10 @@ Optional query parameters:
 4. **Find the drop-off location**: Same as pickup.
 5. **Search for rides**: Use the pickup and drop-off to find available rides. Wait for options to come back.
 6. **Show ride options**: Present all options with fare, vehicle type, and estimated pickup time. Let the user choose.
-7. **Book it**: Confirm the user's choice. Add a tip if they want. Wait for a driver.
-8. **Track the ride**: Check status to see driver details and ride progress.
-9. **Cancel if needed**: Cancel the ride if the user changes their mind.
+7. **Book it**: Confirm the user's choice. Add a pre-ride tip if they want. Wait for a driver.
+8. **Track the ride**: Check booking details (`get_booking_details`) or live ride status (`get_ride_status`) for driver position and ride progress.
+9. **Cancel if needed**: Cancel a search/estimate with `cancel_search`, or cancel a confirmed booking with `cancel_booking` (fetch cancellation reasons first).
+10. **After the ride**: Check the fare breakdown (`get_price_breakdown`) and add a post-ride tip (`post_ride_tip`) if the user wants to tip after completion.
 
 ---
 
