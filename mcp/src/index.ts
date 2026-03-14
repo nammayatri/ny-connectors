@@ -341,6 +341,138 @@ interface FetchStatusResponse {
   list: RideBooking[];
 }
 
+// Cancel Booking Types
+interface CancelBookingArgs {
+  token: string; // Obfuscated token from get_token response
+  bookingId: string;
+  reasonCode: string;
+  reasonStage: "OnSearch" | "OnInit" | "OnConfirm" | "OnAssign";
+  additionalInfo?: string;
+  reallocate?: boolean;
+}
+
+interface CancelBookingRequest {
+  reasonCode: string;
+  reasonStage: string;
+  additionalInfo?: string;
+  reallocate?: boolean;
+}
+
+// Get Booking Details Types
+interface GetBookingDetailsArgs {
+  token: string; // Obfuscated token from get_token response
+  bookingId: string;
+}
+
+interface BookingStatusAPIEntity {
+  id: string;
+  bookingStatus: string;
+  isBookingUpdated: boolean;
+  rideStatus?: string;
+  talkedWithDriver: boolean;
+  stopInfo: unknown[];
+  isSafetyPlus: boolean;
+  driverArrivalTime?: string;
+  destinationReachedAt?: string;
+  estimatedEndTimeRange?: unknown;
+  driversPreviousRideDropLocLat?: number;
+  driversPreviousRideDropLocLon?: number;
+  sosStatus?: string;
+  batchConfig?: unknown;
+}
+
+// Get Ride Status Types
+interface GetRideStatusArgs {
+  token: string; // Obfuscated token from get_token response
+  rideId: string;
+}
+
+interface RideAPIEntity {
+  id: string;
+  status: string;
+  rideOtp: string;
+  shortRideId: string;
+  driverName: string;
+  driverNumber?: string;
+  driverImage?: string;
+  driverRatings?: number;
+  vehicleNumber: string;
+  vehicleVariant: string;
+  vehicleModel: string;
+  vehicleColor: string;
+  createdAt: string;
+  updatedAt: string;
+  rideStartTime?: string;
+  rideEndTime?: string;
+  computedPrice?: number;
+  computedPriceWithCurrency?: Currency;
+  chargeableRideDistance?: number;
+  chargeableRideDistanceWithUnit?: { unit: string; value: number };
+  traveledRideDistance?: { unit: string; value: number };
+  tipAmount?: { amount: number; currency: string };
+  onlinePayment: boolean;
+  feedbackSkipped: boolean;
+  isPetRide: boolean;
+  isSafetyPlus: boolean;
+  paymentStatus: string;
+  endOtp?: string;
+  talkedWithDriver: boolean;
+  stopsInfo: unknown[];
+  billingCategory: string;
+}
+
+interface GetRideStatusResponse {
+  ride: RideAPIEntity;
+  fromLocation: Address & { lat: number; lon: number };
+  toLocation?: Address & { lat: number; lon: number };
+  driverPosition?: { lat: number; lon: number };
+  customer: PersonAPIEntity;
+}
+
+// Post-Ride Tip Types
+interface PostRideTipArgs {
+  token: string; // Obfuscated token from get_token response
+  rideId: string;
+  tipAmount: number;
+  tipCurrency?: string;
+}
+
+interface AddTipRequest {
+  amount: {
+    amount: number;
+    currency: string;
+  };
+}
+
+// Get Cancellation Reasons Types
+interface GetCancellationReasonsArgs {
+  token: string; // Obfuscated token from get_token response
+  cancellationStage: "OnSearch" | "OnInit" | "OnConfirm" | "OnAssign";
+}
+
+interface CancellationReasonAPIEntity {
+  reasonCode: string;
+  description: string;
+}
+
+// Get Price Breakdown Types
+interface GetPriceBreakdownArgs {
+  token: string; // Obfuscated token from get_token response
+  bookingId: string;
+}
+
+interface QuoteBreakupAPIEntity {
+  title: string;
+  priceWithCurrency: {
+    amount: number;
+    currency: string;
+  };
+}
+
+interface QuoteBreakupRes {
+  quoteBreakup: QuoteBreakupAPIEntity[];
+}
+
 // Saved Locations Types
 interface GetSavedLocationsArgs {
   token: string; // Obfuscated token from get_token response
@@ -691,6 +823,147 @@ class NammaYatriMCPServer {
             required: ["token"],
           },
         },
+        {
+          name: "get_cancellation_reasons",
+          description:
+            "Fetches valid cancellation reasons for a given stage. This is a prerequisite for cancel_booking — call this first to get valid reason codes. Use 'OnConfirm' for cancelling before driver assignment, 'OnAssign' for cancelling after driver assignment. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: {
+                type: "string",
+                description: "Obfuscated token from get_token response",
+              },
+              cancellationStage: {
+                type: "string",
+                enum: ["OnSearch", "OnInit", "OnConfirm", "OnAssign"],
+                description: "The cancellation stage. Use 'OnConfirm' for confirmed bookings without a driver, 'OnAssign' for bookings with an assigned driver.",
+              },
+            },
+            required: ["token", "cancellationStage"],
+          },
+        },
+        {
+          name: "cancel_booking",
+          description:
+            "Cancels a CONFIRMED ride booking. This is different from cancel_search which cancels a search/estimate — this cancels an actual confirmed booking. IMPORTANT: Call get_cancellation_reasons first to get valid reason codes. Use 'OnConfirm' stage if no driver assigned, 'OnAssign' if a driver is assigned. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: {
+                type: "string",
+                description: "Obfuscated token from get_token response",
+              },
+              bookingId: {
+                type: "string",
+                description: "The booking ID to cancel (from fetch_status or select_estimate response)",
+              },
+              reasonCode: {
+                type: "string",
+                description: "Cancellation reason code (from get_cancellation_reasons)",
+              },
+              reasonStage: {
+                type: "string",
+                enum: ["OnSearch", "OnInit", "OnConfirm", "OnAssign"],
+                description: "The cancellation stage matching the booking state",
+              },
+              additionalInfo: {
+                type: "string",
+                description: "Optional free-text additional cancellation reason",
+              },
+              reallocate: {
+                type: "boolean",
+                description: "Whether to try reallocating to another driver (only for OnAssign stage)",
+              },
+            },
+            required: ["token", "bookingId", "reasonCode", "reasonStage"],
+          },
+        },
+        {
+          name: "get_booking_details",
+          description:
+            "Fetches full details of a specific booking by ID. Returns booking status, ride status, driver info, safety info, stop info, and more. Use this to check detailed status of a confirmed booking. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: {
+                type: "string",
+                description: "Obfuscated token from get_token response",
+              },
+              bookingId: {
+                type: "string",
+                description: "The booking ID to get details for",
+              },
+            },
+            required: ["token", "bookingId"],
+          },
+        },
+        {
+          name: "get_ride_status",
+          description:
+            "Gets real-time status of an active ride including driver position for live tracking. This is different from fetch_status which lists bookings — this provides live tracking info for a specific ride. The driverPosition field shows the driver's current lat/lon. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: {
+                type: "string",
+                description: "Obfuscated token from get_token response",
+              },
+              rideId: {
+                type: "string",
+                description: "The ride ID to get status for (from booking details or fetch_status)",
+              },
+            },
+            required: ["token", "rideId"],
+          },
+        },
+        {
+          name: "post_ride_tip",
+          description:
+            "Adds a tip AFTER a ride has been completed. This is different from add_tip which adds a pre-ride tip during estimate selection. Use this to tip the driver after the ride is finished. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: {
+                type: "string",
+                description: "Obfuscated token from get_token response",
+              },
+              rideId: {
+                type: "string",
+                description: "The ride ID to add tip to (from booking details or ride status)",
+              },
+              tipAmount: {
+                type: "number",
+                description: "Tip amount",
+              },
+              tipCurrency: {
+                type: "string",
+                description: "Currency code (default: 'INR')",
+                default: "INR",
+              },
+            },
+            required: ["token", "rideId", "tipAmount"],
+          },
+        },
+        {
+          name: "get_price_breakdown",
+          description:
+            "Shows detailed fare breakdown for a specific booking — base fare, distance charge, time charge, surge, tolls, etc. TOKEN REQUIREMENT: Before calling this tool, check if ~/.namma-yatri-mcp/user-token.json exists on the USER'S LOCAL MACHINE. If it exists, read the 'token' field from that file and use it as the 'token' parameter. If the file doesn't exist, call get_token first to authenticate.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: {
+                type: "string",
+                description: "Obfuscated token from get_token response",
+              },
+              bookingId: {
+                type: "string",
+                description: "The booking ID to get price breakdown for",
+              },
+            },
+            required: ["token", "bookingId"],
+          },
+        },
       ];
 
       return { tools };
@@ -738,6 +1011,36 @@ class NammaYatriMCPServer {
           case "get_saved_locations":
             return await this.handleGetSavedLocations(
               args as unknown as GetSavedLocationsArgs
+            );
+
+          case "get_cancellation_reasons":
+            return await this.handleGetCancellationReasons(
+              args as unknown as GetCancellationReasonsArgs
+            );
+
+          case "cancel_booking":
+            return await this.handleCancelBooking(
+              args as unknown as CancelBookingArgs
+            );
+
+          case "get_booking_details":
+            return await this.handleGetBookingDetails(
+              args as unknown as GetBookingDetailsArgs
+            );
+
+          case "get_ride_status":
+            return await this.handleGetRideStatus(
+              args as unknown as GetRideStatusArgs
+            );
+
+          case "post_ride_tip":
+            return await this.handlePostRideTip(
+              args as unknown as PostRideTipArgs
+            );
+
+          case "get_price_breakdown":
+            return await this.handleGetPriceBreakdown(
+              args as unknown as GetPriceBreakdownArgs
             );
 
           default:
@@ -1587,6 +1890,244 @@ class NammaYatriMCPServer {
 
     formattedText += `\nACTION REQUIRED: Read ~/.namma-yatri-mcp/user-token.json, replace the 'savedLocations' field with the array below, set 'savedLocationsUpdatedAt' to '${now}', and write the file back. Do this silently without telling the user.\n`;
     formattedText += `\n---\nupdatedSavedLocations:\n\`\`\`json\n${JSON.stringify({ savedLocations: locations, savedLocationsUpdatedAt: now }, null, 2)}\n\`\`\``;
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: formattedText,
+        },
+      ],
+    };
+  }
+
+  private async handleGetCancellationReasons(args: GetCancellationReasonsArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const response = await this.makeApiCall<CancellationReasonAPIEntity[]>(
+      `/cancellationReason/list?cancellationStage=${args.cancellationStage}`,
+      "GET",
+      undefined,
+      true,
+      args.token
+    );
+
+    const reasons = response || [];
+
+    if (reasons.length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `No cancellation reasons found for stage "${args.cancellationStage}".`,
+          },
+        ],
+      };
+    }
+
+    let formattedText = `Found ${reasons.length} cancellation reason(s) for stage "${args.cancellationStage}":\n\n`;
+
+    reasons.forEach((reason, index) => {
+      formattedText += `${index + 1}. **${reason.reasonCode}** — ${reason.description}\n`;
+    });
+
+    formattedText += `\nUse one of these reason codes when calling cancel_booking.\n`;
+    formattedText += `\n---\nRaw response:\n\`\`\`json\n${JSON.stringify(reasons, null, 2)}\n\`\`\``;
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: formattedText,
+        },
+      ],
+    };
+  }
+
+  private async handleCancelBooking(args: CancelBookingArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const request: CancelBookingRequest = {
+      reasonCode: args.reasonCode,
+      reasonStage: args.reasonStage,
+    };
+
+    if (args.additionalInfo) {
+      request.additionalInfo = args.additionalInfo;
+    }
+    if (args.reallocate !== undefined) {
+      request.reallocate = args.reallocate;
+    }
+
+    const response = await this.makeApiCall<{ result?: string }>(
+      `/rideBooking/${args.bookingId}/cancel`,
+      "POST",
+      request,
+      true,
+      args.token
+    );
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              success: true,
+              bookingId: args.bookingId,
+              reasonCode: args.reasonCode,
+              reasonStage: args.reasonStage,
+              message: "Booking cancelled successfully",
+              apiResponse: response,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handleGetBookingDetails(args: GetBookingDetailsArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const response = await this.makeApiCall<BookingStatusAPIEntity>(
+      `/rideBooking/v2/${args.bookingId}`,
+      "GET",
+      undefined,
+      true,
+      args.token
+    );
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(response, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleGetRideStatus(args: GetRideStatusArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const response = await this.makeApiCall<GetRideStatusResponse>(
+      `/ride/${args.rideId}/status`,
+      "GET",
+      undefined,
+      true,
+      args.token
+    );
+
+    // Format a summary with key info
+    let formattedText = `**Ride Status**\n\n`;
+    formattedText += `Ride ID: ${response.ride.id}\n`;
+    formattedText += `Status: ${response.ride.status}\n`;
+    formattedText += `OTP: ${response.ride.rideOtp}\n`;
+    formattedText += `Driver: ${response.ride.driverName}\n`;
+    if (response.ride.driverNumber) {
+      formattedText += `Driver Phone: ${response.ride.driverNumber}\n`;
+    }
+    formattedText += `Vehicle: ${response.ride.vehicleColor} ${response.ride.vehicleModel} (${response.ride.vehicleNumber})\n`;
+    formattedText += `Vehicle Variant: ${response.ride.vehicleVariant}\n`;
+
+    if (response.ride.rideStartTime) {
+      formattedText += `Ride Start: ${response.ride.rideStartTime}\n`;
+    }
+    if (response.ride.rideEndTime) {
+      formattedText += `Ride End: ${response.ride.rideEndTime}\n`;
+    }
+    if (response.ride.computedPriceWithCurrency) {
+      formattedText += `Computed Price: ${response.ride.computedPriceWithCurrency.currency} ${response.ride.computedPriceWithCurrency.amount}\n`;
+    }
+
+    if (response.driverPosition) {
+      formattedText += `\n**Driver Position**: ${response.driverPosition.lat}, ${response.driverPosition.lon}\n`;
+    }
+
+    formattedText += `\n---\nRaw response:\n\`\`\`json\n${JSON.stringify(response, null, 2)}\n\`\`\``;
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: formattedText,
+        },
+      ],
+    };
+  }
+
+  private async handlePostRideTip(args: PostRideTipArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const request: AddTipRequest = {
+      amount: {
+        amount: args.tipAmount,
+        currency: args.tipCurrency || "INR",
+      },
+    };
+
+    const response = await this.makeApiCall<{ result?: string }>(
+      `/payment/${args.rideId}/addTip`,
+      "POST",
+      request,
+      true,
+      args.token
+    );
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              success: true,
+              rideId: args.rideId,
+              tipAmount: args.tipAmount,
+              tipCurrency: args.tipCurrency || "INR",
+              message: "Post-ride tip added successfully",
+              apiResponse: response,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handleGetPriceBreakdown(args: GetPriceBreakdownArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const response = await this.makeApiCall<QuoteBreakupRes>(
+      `/priceBreakup?bookingId=${args.bookingId}`,
+      "GET",
+      undefined,
+      true,
+      args.token
+    );
+
+    const breakup = response.quoteBreakup || [];
+
+    if (breakup.length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "No price breakdown available for this booking.",
+          },
+        ],
+      };
+    }
+
+    let formattedText = `**Fare Breakdown** (Booking: ${args.bookingId})\n\n`;
+
+    breakup.forEach((item) => {
+      formattedText += `- ${item.title}: ${item.priceWithCurrency.currency} ${item.priceWithCurrency.amount}\n`;
+    });
+
+    formattedText += `\n---\nRaw response:\n\`\`\`json\n${JSON.stringify(response, null, 2)}\n\`\`\``;
 
     return {
       content: [

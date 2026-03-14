@@ -802,6 +802,305 @@ cmd_saved_locations() {
     fi
 }
 
+cmd_cancellation_reasons() {
+    require_token >/dev/null
+
+    local stage=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --stage) stage="$2"; shift 2 ;;
+            *)       err "Unknown flag: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$stage" ]; then
+        err "Usage: ny-cli cancellation-reasons --stage <OnSearch|OnInit|OnConfirm|OnAssign>"
+        exit 1
+    fi
+
+    info "Fetching cancellation reasons for stage: $stage..."
+
+    local response
+    response=$(api_call GET "/cancellationReason/list?cancellationStage=${stage}") || exit 1
+
+    local count
+    count=$(json_length "$response" ".")
+
+    if [ "$count" -eq 0 ] 2>/dev/null; then
+        info "No cancellation reasons found for stage \"$stage\"."
+        return 0
+    fi
+
+    header "$count cancellation reason(s) for stage \"$stage\":"
+    echo ""
+
+    if $HAS_JQ; then
+        local i=0
+        while [ "$i" -lt "$count" ]; do
+            local r_code r_desc
+            r_code=$(json_arr_field "$response" "." "$i" "reasonCode")
+            r_desc=$(json_arr_field "$response" "." "$i" "description")
+
+            printf "  ${BOLD}%d.${NC} ${CYAN}%s${NC} — %s\n" $((i+1)) "$r_code" "$r_desc"
+            i=$((i+1))
+        done
+        echo ""
+    else
+        json_pp "$response"
+    fi
+}
+
+cmd_cancel_booking() {
+    require_token >/dev/null
+
+    local booking_id="" reason_code="" reason_stage="" additional_info="" reallocate=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --booking-id)      booking_id="$2"; shift 2 ;;
+            --reason-code)     reason_code="$2"; shift 2 ;;
+            --reason-stage)    reason_stage="$2"; shift 2 ;;
+            --additional-info) additional_info="$2"; shift 2 ;;
+            --reallocate)      reallocate="true"; shift ;;
+            *)                 err "Unknown flag: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$booking_id" ] || [ -z "$reason_code" ] || [ -z "$reason_stage" ]; then
+        err "Usage: ny-cli cancel-booking --booking-id <id> --reason-code <code> --reason-stage <stage>"
+        err "  Optional: --additional-info <text> --reallocate"
+        exit 1
+    fi
+
+    local body
+    if $HAS_JQ; then
+        body=$(jq -n \
+            --arg rc "$reason_code" \
+            --arg rs "$reason_stage" \
+            '{reasonCode:$rc,reasonStage:$rs}')
+        if [ -n "$additional_info" ]; then
+            body=$(printf '%s' "$body" | jq --arg ai "$additional_info" '. + {additionalInfo:$ai}')
+        fi
+        if [ "$reallocate" = "true" ]; then
+            body=$(printf '%s' "$body" | jq '. + {reallocate:true}')
+        fi
+    else
+        body=$(printf '{"reasonCode":"%s","reasonStage":"%s"' "$reason_code" "$reason_stage")
+        if [ -n "$additional_info" ]; then
+            body="${body},\"additionalInfo\":\"$additional_info\""
+        fi
+        if [ "$reallocate" = "true" ]; then
+            body="${body},\"reallocate\":true"
+        fi
+        body="${body}}"
+    fi
+
+    info "Cancelling booking $booking_id..."
+
+    api_call POST "/rideBooking/${booking_id}/cancel" "$body" >/dev/null || exit 1
+
+    ok "Booking cancelled."
+}
+
+cmd_booking_details() {
+    require_token >/dev/null
+
+    local booking_id=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --booking-id) booking_id="$2"; shift 2 ;;
+            *)            err "Unknown flag: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$booking_id" ]; then
+        err "Usage: ny-cli booking-details --booking-id <id>"
+        exit 1
+    fi
+
+    info "Fetching booking details..."
+
+    local response
+    response=$(api_call GET "/rideBooking/v2/${booking_id}") || exit 1
+
+    if $HAS_JQ; then
+        local b_id b_status b_ride_status b_safety b_driver_arrival
+        b_id=$(json_get "$response" "id")
+        b_status=$(json_get "$response" "bookingStatus")
+        b_ride_status=$(json_get "$response" "rideStatus")
+        b_safety=$(printf '%s' "$response" | jq -r '.isSafetyPlus // empty' 2>/dev/null)
+        b_driver_arrival=$(json_get "$response" "driverArrivalTime")
+
+        local status_color="$NC"
+        case "$b_status" in
+            *COMPLETED*) status_color="$GREEN" ;;
+            *CANCELLED*) status_color="$RED" ;;
+            *CONFIRMED*|*TRIP_ASSIGNED*) status_color="$YELLOW" ;;
+        esac
+
+        header "Booking Details"
+        echo ""
+        printf "  ${BOLD}Booking ID:${NC}     %s\n" "$b_id"
+        printf "  ${BOLD}Booking Status:${NC} ${status_color}%s${NC}\n" "$b_status"
+        [ -n "$b_ride_status" ] && printf "  ${BOLD}Ride Status:${NC}    %s\n" "$b_ride_status"
+        [ -n "$b_driver_arrival" ] && printf "  ${BOLD}Driver Arrival:${NC} %s\n" "$b_driver_arrival"
+        [ -n "$b_safety" ] && printf "  ${BOLD}Safety Plus:${NC}    %s\n" "$b_safety"
+        echo ""
+        printf "  ${DIM}Full response:${NC}\n"
+        json_pp "$response" | sed 's/^/  /'
+    else
+        json_pp "$response"
+    fi
+}
+
+cmd_ride_status() {
+    require_token >/dev/null
+
+    local ride_id=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --ride-id) ride_id="$2"; shift 2 ;;
+            *)         err "Unknown flag: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$ride_id" ]; then
+        err "Usage: ny-cli ride-status --ride-id <id>"
+        exit 1
+    fi
+
+    info "Fetching ride status..."
+
+    local response
+    response=$(api_call GET "/ride/${ride_id}/status") || exit 1
+
+    if $HAS_JQ; then
+        local r_id r_status r_otp r_driver r_driver_num r_vehicle r_model r_color
+        local r_start r_end r_price r_lat r_lon
+        r_id=$(printf '%s' "$response" | jq -r '.ride.id // empty' 2>/dev/null)
+        r_status=$(printf '%s' "$response" | jq -r '.ride.status // empty' 2>/dev/null)
+        r_otp=$(printf '%s' "$response" | jq -r '.ride.rideOtp // empty' 2>/dev/null)
+        r_driver=$(printf '%s' "$response" | jq -r '.ride.driverName // empty' 2>/dev/null)
+        r_driver_num=$(printf '%s' "$response" | jq -r '.ride.driverNumber // empty' 2>/dev/null)
+        r_vehicle=$(printf '%s' "$response" | jq -r '.ride.vehicleNumber // empty' 2>/dev/null)
+        r_model=$(printf '%s' "$response" | jq -r '.ride.vehicleModel // empty' 2>/dev/null)
+        r_color=$(printf '%s' "$response" | jq -r '.ride.vehicleColor // empty' 2>/dev/null)
+        r_start=$(printf '%s' "$response" | jq -r '.ride.rideStartTime // empty' 2>/dev/null)
+        r_end=$(printf '%s' "$response" | jq -r '.ride.rideEndTime // empty' 2>/dev/null)
+        r_price=$(printf '%s' "$response" | jq -r '.ride.computedPriceWithCurrency | "\(.currency) \(.amount)"' 2>/dev/null)
+        r_lat=$(printf '%s' "$response" | jq -r '.driverPosition.lat // empty' 2>/dev/null)
+        r_lon=$(printf '%s' "$response" | jq -r '.driverPosition.lon // empty' 2>/dev/null)
+
+        local status_color="$NC"
+        case "$r_status" in
+            COMPLETED) status_color="$GREEN" ;;
+            CANCELLED) status_color="$RED" ;;
+            INPROGRESS|NEW) status_color="$YELLOW" ;;
+        esac
+
+        header "Ride Status"
+        echo ""
+        printf "  ${BOLD}Ride ID:${NC}    %s\n" "$r_id"
+        printf "  ${BOLD}Status:${NC}     ${status_color}%s${NC}\n" "$r_status"
+        [ -n "$r_otp" ] && printf "  ${BOLD}OTP:${NC}        %s\n" "$r_otp"
+        [ -n "$r_driver" ] && printf "  ${BOLD}Driver:${NC}     %s\n" "$r_driver"
+        [ -n "$r_driver_num" ] && printf "  ${BOLD}Phone:${NC}      %s\n" "$r_driver_num"
+        [ -n "$r_vehicle" ] && printf "  ${BOLD}Vehicle:${NC}    %s %s (%s)\n" "$r_color" "$r_model" "$r_vehicle"
+        [ -n "$r_start" ] && printf "  ${BOLD}Start:${NC}      %s\n" "$r_start"
+        [ -n "$r_end" ] && printf "  ${BOLD}End:${NC}        %s\n" "$r_end"
+        [ -n "$r_price" ] && [ "$r_price" != "null null" ] && printf "  ${BOLD}Price:${NC}      %s\n" "$r_price"
+        if [ -n "$r_lat" ] && [ -n "$r_lon" ]; then
+            echo ""
+            printf "  ${BOLD}Driver Position:${NC} %s, %s\n" "$r_lat" "$r_lon"
+        fi
+        echo ""
+    else
+        json_pp "$response"
+    fi
+}
+
+cmd_post_tip() {
+    require_token >/dev/null
+
+    local ride_id="" amount="" currency="INR"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --ride-id)   ride_id="$2"; shift 2 ;;
+            --amount)    amount="$2"; shift 2 ;;
+            --currency)  currency="$2"; shift 2 ;;
+            *)           err "Unknown flag: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$ride_id" ] || [ -z "$amount" ]; then
+        err "Usage: ny-cli post-tip --ride-id <id> --amount <number> [--currency INR]"
+        exit 1
+    fi
+
+    local body
+    body=$(printf '{"amount":{"amount":%s,"currency":"%s"}}' "$amount" "$currency")
+
+    info "Adding post-ride tip of $currency $amount to ride $ride_id..."
+
+    api_call POST "/payment/${ride_id}/addTip" "$body" >/dev/null || exit 1
+
+    ok "Post-ride tip added."
+}
+
+cmd_price_breakdown() {
+    require_token >/dev/null
+
+    local booking_id=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --booking-id) booking_id="$2"; shift 2 ;;
+            *)            err "Unknown flag: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$booking_id" ]; then
+        err "Usage: ny-cli price-breakdown --booking-id <id>"
+        exit 1
+    fi
+
+    info "Fetching price breakdown..."
+
+    local response
+    response=$(api_call GET "/priceBreakup?bookingId=${booking_id}") || exit 1
+
+    local count
+    count=$(json_length "$response" ".quoteBreakup")
+
+    if [ "$count" -eq 0 ] 2>/dev/null; then
+        info "No price breakdown available for this booking."
+        return 0
+    fi
+
+    header "Fare Breakdown:"
+    echo ""
+
+    if $HAS_JQ; then
+        local i=0
+        while [ "$i" -lt "$count" ]; do
+            local title amount_val amount_currency
+            title=$(json_arr_field "$response" ".quoteBreakup" "$i" "title")
+            amount_val=$(printf '%s' "$response" | jq -r ".quoteBreakup[$i].priceWithCurrency.amount // empty" 2>/dev/null)
+            amount_currency=$(printf '%s' "$response" | jq -r ".quoteBreakup[$i].priceWithCurrency.currency // empty" 2>/dev/null)
+
+            printf "  ${BOLD}%-25s${NC} ${GREEN}%s %s${NC}\n" "$title" "$amount_currency" "$amount_val"
+            i=$((i+1))
+        done
+        echo ""
+    else
+        json_pp "$response"
+    fi
+}
+
 # =============================================================================
 # Help
 # =============================================================================
@@ -824,6 +1123,12 @@ ${BOLD}COMMANDS${NC}
     ${CYAN}cancel${NC}             Cancel an active search
     ${CYAN}status${NC}             Check ride booking status
     ${CYAN}saved-locations${NC}    List saved locations (Home, Work, etc.)
+    ${CYAN}cancellation-reasons${NC} List valid cancellation reasons for a stage
+    ${CYAN}cancel-booking${NC}     Cancel a confirmed ride booking
+    ${CYAN}booking-details${NC}    Get full details of a specific booking
+    ${CYAN}ride-status${NC}        Get real-time status of an active ride
+    ${CYAN}post-tip${NC}           Add a tip after a completed ride
+    ${CYAN}price-breakdown${NC}    Show detailed fare breakdown
     ${CYAN}help${NC}               Show this help
     ${CYAN}version${NC}            Show version
 
@@ -849,7 +1154,7 @@ ${BOLD}EXAMPLES${NC}
     ${DIM}# Add a tip${NC}
     ny-cli tip --estimate-id "abc-123" --amount 20
 
-    ${DIM}# Cancel${NC}
+    ${DIM}# Cancel a search${NC}
     ny-cli cancel --estimate-id "abc-123"
 
     ${DIM}# Check active rides${NC}
@@ -857,6 +1162,24 @@ ${BOLD}EXAMPLES${NC}
 
     ${DIM}# All rides${NC}
     ny-cli status --all
+
+    ${DIM}# List cancellation reasons${NC}
+    ny-cli cancellation-reasons --stage OnConfirm
+
+    ${DIM}# Cancel a confirmed booking${NC}
+    ny-cli cancel-booking --booking-id "abc-123" --reason-code "OTHER" --reason-stage OnConfirm
+
+    ${DIM}# Get booking details${NC}
+    ny-cli booking-details --booking-id "abc-123"
+
+    ${DIM}# Get live ride status${NC}
+    ny-cli ride-status --ride-id "abc-123"
+
+    ${DIM}# Add post-ride tip${NC}
+    ny-cli post-tip --ride-id "abc-123" --amount 50
+
+    ${DIM}# Get fare breakdown${NC}
+    ny-cli price-breakdown --booking-id "abc-123"
 
 ${BOLD}ENVIRONMENT${NC}
     NY_API_BASE    Override API base URL (default: https://api.moving.tech/pilot/app/v2)
@@ -877,17 +1200,23 @@ main() {
     shift 2>/dev/null || true
 
     case "$cmd" in
-        auth)              cmd_auth "$@" ;;
-        places)            cmd_places "$@" ;;
-        place-details)     cmd_place_details "$@" ;;
-        search)            cmd_search "$@" ;;
-        select)            cmd_select "$@" ;;
-        tip)               cmd_tip "$@" ;;
-        cancel)            cmd_cancel "$@" ;;
-        status)            cmd_status "$@" ;;
-        saved-locations)   cmd_saved_locations "$@" ;;
-        help|--help|-h)    cmd_help ;;
-        version|--version|-v) echo "ny-cli $VERSION" ;;
+        auth)                  cmd_auth "$@" ;;
+        places)                cmd_places "$@" ;;
+        place-details)         cmd_place_details "$@" ;;
+        search)                cmd_search "$@" ;;
+        select)                cmd_select "$@" ;;
+        tip)                   cmd_tip "$@" ;;
+        cancel)                cmd_cancel "$@" ;;
+        status)                cmd_status "$@" ;;
+        saved-locations)       cmd_saved_locations "$@" ;;
+        cancellation-reasons)  cmd_cancellation_reasons "$@" ;;
+        cancel-booking)        cmd_cancel_booking "$@" ;;
+        booking-details)       cmd_booking_details "$@" ;;
+        ride-status)           cmd_ride_status "$@" ;;
+        post-tip)              cmd_post_tip "$@" ;;
+        price-breakdown)       cmd_price_breakdown "$@" ;;
+        help|--help|-h)        cmd_help ;;
+        version|--version|-v)  echo "ny-cli $VERSION" ;;
         *)
             err "Unknown command: $cmd"
             echo ""
