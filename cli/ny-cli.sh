@@ -7,7 +7,7 @@ set -euo pipefail
 # =============================================================================
 
 VERSION="1.0.0"
-API_BASE="${NY_API_BASE:-https://api.moving.tech/app/pilot/v2}"
+API_BASE="${NY_API_BASE:-https://api.moving.tech/pilot/app/v2}"
 TOKEN_DIR="$HOME/.namma-yatri"
 TOKEN_FILE="$TOKEN_DIR/token.json"
 POLL_INTERVAL=2
@@ -218,7 +218,7 @@ poll_search_results() {
             return 1
         fi
 
-        info "Polling for estimates... (${elapsed}s)"
+        info "Polling for estimates... (${elapsed}s)" >&2
         response=$(api_call GET "/rideSearch/${search_id}/results") || return 1
 
         count=$(json_length "$response" ".estimates")
@@ -240,11 +240,11 @@ poll_driver_assignment() {
         elapsed=$(( $(date +%s) - start_time ))
         if [ "$elapsed" -ge "$DRIVER_POLL_MAX" ]; then
             warn "No driver assigned after ${DRIVER_POLL_MAX}s."
-            info "You'll receive a notification on your phone when a driver is assigned."
+            info "You'll receive a notification on your phone when a driver is assigned." >&2
             return 1
         fi
 
-        info "Waiting for driver... (${elapsed}s)"
+        info "Waiting for driver... (${elapsed}s)" >&2
         response=$(api_call GET "/rideBooking/list?onlyActive=true&clientId=${CLIENT_ID}") || return 1
 
         count=$(json_length "$response" ".list")
@@ -859,7 +859,7 @@ ${BOLD}EXAMPLES${NC}
     ny-cli status --all
 
 ${BOLD}ENVIRONMENT${NC}
-    NY_API_BASE    Override API base URL (default: https://api.moving.tech/app/pilot/v2)
+    NY_API_BASE    Override API base URL (default: https://api.moving.tech/pilot/app/v2)
 
 ${BOLD}TOKEN${NC}
     Stored at: ~/.namma-yatri/token.json

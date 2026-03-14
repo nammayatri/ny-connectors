@@ -64,7 +64,7 @@ All MCP code lives in `mcp/src/index.ts`. Organized into:
 ## API Target
 
 MCP server: `https://api.sandbox.moving.tech/dev/app/v2` (configurable via `NAMMA_YATRI_API_BASE` env var)
-CLI/Skill: `https://api.moving.tech/app/pilot/v2` (configurable via `NY_API_BASE` env var)
+CLI/Skill: `https://api.moving.tech/pilot/app/v2` (configurable via `NY_API_BASE` env var)
 
 ## Deployment
 
