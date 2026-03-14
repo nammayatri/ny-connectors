@@ -83,6 +83,35 @@ json_arr_field() {
 }
 
 # =============================================================================
+# Error Message Extraction
+# =============================================================================
+
+extract_error_message() {
+    local body="$1"
+    if [ -z "$body" ]; then
+        return 1
+    fi
+
+    if $HAS_JQ; then
+        local msg
+        msg=$(printf '%s' "$body" | jq -r '
+            .message //
+            .error //
+            .errorMessage //
+            .errorCode //
+            empty
+        ' 2>/dev/null)
+        if [ -n "$msg" ]; then
+            printf '%s' "$msg"
+            return 0
+        fi
+    fi
+
+    # Fallback: show raw body truncated to 200 characters
+    printf '%s' "$body" | head -c 200
+}
+
+# =============================================================================
 # Token Management
 # =============================================================================
 
@@ -198,6 +227,48 @@ api_call() {
             fi
             return 1
             ;;
+    esac
+}
+
+api_call_raw() {
+    local method="$1" endpoint="$2" body="${3:-}"
+    local url="${API_BASE}${endpoint}"
+    local token response http_code body_text
+
+    token=$(read_token)
+
+    local curl_args=(-s -w '\n%{http_code}' -X "$method" -H "Content-Type: application/json")
+
+    if [ -n "$token" ]; then
+        curl_args+=(-H "token: $token")
+    fi
+
+    if [ -n "$body" ] && [ "$method" = "POST" ]; then
+        curl_args+=(-d "$body")
+    fi
+
+    response=$(curl "${curl_args[@]}" "$url") || {
+        err "Network error: could not reach $url"
+        exit 1
+    }
+
+    http_code=$(printf '%s' "$response" | tail -1)
+    body_text=$(printf '%s' "$response" | sed '$d')
+
+    # Handle 401 globally — auth failures apply everywhere
+    if [ "$http_code" = "401" ]; then
+        clear_token
+        err "Authentication failed (401). Token expired or invalid."
+        err "Please re-authenticate: ny-cli auth"
+        exit 1
+    fi
+
+    # Return status code and body to caller (separated by newline)
+    printf '%s\n%s' "$http_code" "$body_text"
+
+    case "$http_code" in
+        2[0-9][0-9]) return 0 ;;
+        *)           return 1 ;;
     esac
 }
 
@@ -676,7 +747,38 @@ cmd_cancel() {
 
     info "Cancelling estimate $estimate_id..."
 
-    api_call POST "/estimate/${estimate_id}/cancelSearch" '{}' >/dev/null || exit 1
+    local raw_response http_code body_text api_msg
+    raw_response=$(api_call_raw POST "/estimate/${estimate_id}/cancelSearch" '{}') || {
+        http_code=$(printf '%s' "$raw_response" | head -1)
+        body_text=$(printf '%s' "$raw_response" | tail -n +2)
+        api_msg=$(extract_error_message "$body_text")
+
+        case "$http_code" in
+            400)
+                err "Bad request: the estimate ID may be malformed or the request is invalid."
+                [ -n "$api_msg" ] && err "Server says: $api_msg"
+                ;;
+            404)
+                err "Estimate not found: '$estimate_id' does not exist or has already expired."
+                [ -n "$api_msg" ] && err "Server says: $api_msg"
+                ;;
+            409)
+                err "Conflict: this estimate has already been cancelled or is in a state that cannot be cancelled."
+                [ -n "$api_msg" ] && err "Server says: $api_msg"
+                ;;
+            *)
+                err "API error: HTTP $http_code on POST /estimate/${estimate_id}/cancelSearch"
+                if [ -n "$body_text" ]; then
+                    if $HAS_JQ; then
+                        printf '%s' "$body_text" | jq . 2>/dev/null >&2 || printf '%s\n' "$body_text" >&2
+                    else
+                        printf '%s\n' "$body_text" >&2
+                    fi
+                fi
+                ;;
+        esac
+        return 1
+    }
 
     ok "Search cancelled."
 }
