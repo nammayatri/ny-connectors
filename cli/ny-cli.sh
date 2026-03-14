@@ -64,6 +64,28 @@ json_pp() {
     fi
 }
 
+# Extract a human-readable error message from an API JSON response body.
+# Tries common error fields (.message, .error, .errorMessage) via jq,
+# falls back to displaying the raw body.
+extract_error_message() {
+    local body="$1"
+    [ -z "$body" ] && return
+
+    if $HAS_JQ; then
+        local msg
+        msg=$(printf '%s' "$body" | jq -r '
+            (.message // .error // .errorMessage // .errorCode // empty)
+        ' 2>/dev/null)
+        if [ -n "$msg" ] && [ "$msg" != "null" ]; then
+            printf '%s' "$msg"
+            return
+        fi
+    fi
+
+    # Fallback: return raw body (trimmed to first 200 chars for readability)
+    printf '%s' "$body" | head -c 200
+}
+
 json_length() {
     local json="$1" path="$2"
     if $HAS_JQ; then
@@ -198,6 +220,59 @@ api_call() {
             fi
             return 1
             ;;
+    esac
+}
+
+# Low-level API call that returns both HTTP status code and response body,
+# separated by a newline delimiter. Callers that need to inspect the status
+# code (e.g. cmd_cancel) should use this instead of api_call.
+#
+# Output format (stdout):
+#   <http_status_code>\n<response_body>
+#
+# Returns 0 on success (2xx), 1 on error. Does NOT print errors itself —
+# the caller is responsible for interpreting the status code and body.
+# Exception: 401 is still handled here (clears token and exits) since
+# it applies globally.
+api_call_raw() {
+    local method="$1" endpoint="$2" body="${3:-}"
+    local url="${API_BASE}${endpoint}"
+    local token response http_code body_text
+
+    token=$(read_token)
+
+    local curl_args=(-s -w '\n%{http_code}' -X "$method" -H "Content-Type: application/json")
+
+    if [ -n "$token" ]; then
+        curl_args+=(-H "token: $token")
+    fi
+
+    if [ -n "$body" ] && [ "$method" = "POST" ]; then
+        curl_args+=(-d "$body")
+    fi
+
+    response=$(curl "${curl_args[@]}" "$url") || {
+        err "Network error: could not reach $url"
+        exit 1
+    }
+
+    http_code=$(printf '%s' "$response" | tail -1)
+    body_text=$(printf '%s' "$response" | sed '$d')
+
+    # 401 is always fatal — clear token and exit regardless of caller
+    if [ "$http_code" = "401" ]; then
+        clear_token
+        err "Authentication failed (401). Token expired or invalid."
+        err "Please re-authenticate: ny-cli auth"
+        exit 1
+    fi
+
+    # Return status code and body separated by newline
+    printf '%s\n%s' "$http_code" "$body_text"
+
+    case "$http_code" in
+        2[0-9][0-9]) return 0 ;;
+        *)           return 1 ;;
     esac
 }
 
@@ -676,9 +751,50 @@ cmd_cancel() {
 
     info "Cancelling estimate $estimate_id..."
 
-    api_call POST "/estimate/${estimate_id}/cancelSearch" '{}' >/dev/null || exit 1
+    # Use api_call_raw to capture HTTP status code and response body separately,
+    # so we can map specific error codes to user-friendly messages.
+    local raw_response http_code body_text
+    raw_response=$(api_call_raw POST "/estimate/${estimate_id}/cancelSearch" '{}' 2>&1) || true
+    http_code=$(printf '%s' "$raw_response" | head -1)
+    body_text=$(printf '%s' "$raw_response" | tail -n +2)
 
-    ok "Search cancelled."
+    case "$http_code" in
+        2[0-9][0-9])
+            ok "Search cancelled."
+            return 0
+            ;;
+        400)
+            err "Estimate cannot be cancelled in its current state — it may have expired or already been processed."
+            ;;
+        404)
+            err "Estimate not found — it may have already been cancelled."
+            ;;
+        409)
+            err "Estimate was already processed."
+            ;;
+        *)
+            err "Unexpected error (HTTP $http_code). See details below."
+            ;;
+    esac
+
+    # For all error cases, try to extract and display a meaningful message
+    # from the API response body.
+    if [ -n "$body_text" ]; then
+        local parsed_msg
+        parsed_msg=$(extract_error_message "$body_text")
+        if [ -n "$parsed_msg" ]; then
+            info "Server response: $parsed_msg"
+        else
+            info "Raw response:"
+            if $HAS_JQ; then
+                printf '%s' "$body_text" | jq . 2>/dev/null >&2 || printf '  %s\n' "$body_text" >&2
+            else
+                printf '  %s\n' "$body_text" >&2
+            fi
+        fi
+    fi
+
+    return 1
 }
 
 cmd_status() {
