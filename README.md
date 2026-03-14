@@ -135,7 +135,7 @@ ny-cli saved-locations
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NY_API_BASE` | `https://api.moving.tech/app/pilot/v2` | API base URL |
+| `NY_API_BASE` | `https://api.moving.tech/pilot/app/v2` | API base URL |
 
 ### Token Storage
 
