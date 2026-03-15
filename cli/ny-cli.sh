@@ -1208,89 +1208,87 @@ cmd_price_breakdown() {
 # =============================================================================
 
 cmd_help() {
-    cat <<HELPEOF
-
-${BOLD}ny-cli${NC} v${VERSION} — Namma Yatri CLI
-
-${BOLD}USAGE${NC}
-    ny-cli <command> [options]
-
-${BOLD}COMMANDS${NC}
-    ${CYAN}auth${NC}               Authenticate with Namma Yatri
-    ${CYAN}places${NC}             Search for places (autocomplete)
-    ${CYAN}place-details${NC}      Get place coordinates and address
-    ${CYAN}search${NC}             Search for available rides
-    ${CYAN}select${NC}             Select an estimate to book
-    ${CYAN}tip${NC}                Add a tip and select estimate
-    ${CYAN}cancel${NC}             Cancel an active search
-    ${CYAN}status${NC}             Check ride booking status
-    ${CYAN}saved-locations${NC}    List saved locations (Home, Work, etc.)
-    ${CYAN}cancellation-reasons${NC} List valid cancellation reasons for a stage
-    ${CYAN}cancel-booking${NC}     Cancel a confirmed ride booking
-    ${CYAN}booking-details${NC}    Get full details of a specific booking
-    ${CYAN}ride-status${NC}        Get real-time status of an active ride
-    ${CYAN}post-tip${NC}           Add a tip after a completed ride
-    ${CYAN}price-breakdown${NC}    Show detailed fare breakdown
-    ${CYAN}help${NC}               Show this help
-    ${CYAN}version${NC}            Show version
-
-${BOLD}EXAMPLES${NC}
-    ${DIM}# Authenticate${NC}
-    ny-cli auth --mobile 9876543210 --code YOUR_ACCESS_CODE
-
-    ${DIM}# Search for a place${NC}
-    ny-cli places "Koramangala"
-
-    ${DIM}# Get place coordinates${NC}
-    ny-cli place-details --place-id "ChIJx9..."
-
-    ${DIM}# Search for rides${NC}
-    ny-cli search --from-lat 12.935 --from-lon 77.624 --to-lat 12.971 --to-lon 77.594
-
-    ${DIM}# Select an estimate${NC}
-    ny-cli select --estimate-id "abc-123"
-
-    ${DIM}# Select multiple estimates${NC}
-    ny-cli select --estimate-id "abc-123" --also "def-456,ghi-789"
-
-    ${DIM}# Add a tip${NC}
-    ny-cli tip --estimate-id "abc-123" --amount 20
-
-    ${DIM}# Cancel a search${NC}
-    ny-cli cancel --estimate-id "abc-123"
-
-    ${DIM}# Check active rides${NC}
-    ny-cli status --active
-
-    ${DIM}# All rides${NC}
-    ny-cli status --all
-
-    ${DIM}# List cancellation reasons${NC}
-    ny-cli cancellation-reasons --stage OnConfirm
-
-    ${DIM}# Cancel a confirmed booking${NC}
-    ny-cli cancel-booking --booking-id "abc-123" --reason-code "OTHER" --reason-stage OnConfirm
-
-    ${DIM}# Get booking details${NC}
-    ny-cli booking-details --booking-id "abc-123"
-
-    ${DIM}# Get live ride status${NC}
-    ny-cli ride-status --ride-id "abc-123"
-
-    ${DIM}# Add post-ride tip${NC}
-    ny-cli post-tip --ride-id "abc-123" --amount 50
-
-    ${DIM}# Get fare breakdown${NC}
-    ny-cli price-breakdown --booking-id "abc-123"
-
-${BOLD}ENVIRONMENT${NC}
-    NY_API_BASE    Override API base URL (default: https://api.moving.tech/pilot/app/v2)
-
-${BOLD}TOKEN${NC}
-    Stored at: ~/.namma-yatri/token.json
-    Install jq for best experience: https://jqlang.github.io/jq/
-
-HELPEOF
+    printf '\n'
+    printf "${BOLD}ny-cli${NC} v${VERSION} — Namma Yatri CLI\n"
+    printf '\n'
+    printf "${BOLD}USAGE${NC}\n"
+    printf "    ny-cli <command> [options]\n"
+    printf '\n'
+    printf "${BOLD}COMMANDS${NC}\n"
+    printf "    ${CYAN}auth${NC}               Authenticate with Namma Yatri\n"
+    printf "    ${CYAN}places${NC}             Search for places (autocomplete)\n"
+    printf "    ${CYAN}place-details${NC}      Get place coordinates and address\n"
+    printf "    ${CYAN}search${NC}             Search for available rides\n"
+    printf "    ${CYAN}select${NC}             Select an estimate to book\n"
+    printf "    ${CYAN}tip${NC}                Add a tip and select estimate\n"
+    printf "    ${CYAN}cancel${NC}             Cancel an active search\n"
+    printf "    ${CYAN}status${NC}             Check ride booking status\n"
+    printf "    ${CYAN}saved-locations${NC}    List saved locations (Home, Work, etc.)\n"
+    printf "    ${CYAN}cancellation-reasons${NC} List valid cancellation reasons for a stage\n"
+    printf "    ${CYAN}cancel-booking${NC}     Cancel a confirmed ride booking\n"
+    printf "    ${CYAN}booking-details${NC}    Get full details of a specific booking\n"
+    printf "    ${CYAN}ride-status${NC}        Get real-time status of an active ride\n"
+    printf "    ${CYAN}post-tip${NC}           Add a tip after a completed ride\n"
+    printf "    ${CYAN}price-breakdown${NC}    Show detailed fare breakdown\n"
+    printf "    ${CYAN}help${NC}               Show this help\n"
+    printf "    ${CYAN}version${NC}            Show version\n"
+    printf '\n'
+    printf "${BOLD}EXAMPLES${NC}\n"
+    printf "    ${DIM}# Authenticate${NC}\n"
+    printf "    ny-cli auth --mobile 9876543210 --code YOUR_ACCESS_CODE\n"
+    printf '\n'
+    printf "    ${DIM}# Search for a place${NC}\n"
+    printf "    ny-cli places \"Koramangala\"\n"
+    printf '\n'
+    printf "    ${DIM}# Get place coordinates${NC}\n"
+    printf "    ny-cli place-details --place-id \"ChIJx9...\"\n"
+    printf '\n'
+    printf "    ${DIM}# Search for rides${NC}\n"
+    printf "    ny-cli search --from-lat 12.935 --from-lon 77.624 --to-lat 12.971 --to-lon 77.594\n"
+    printf '\n'
+    printf "    ${DIM}# Select an estimate${NC}\n"
+    printf "    ny-cli select --estimate-id \"abc-123\"\n"
+    printf '\n'
+    printf "    ${DIM}# Select multiple estimates${NC}\n"
+    printf "    ny-cli select --estimate-id \"abc-123\" --also \"def-456,ghi-789\"\n"
+    printf '\n'
+    printf "    ${DIM}# Add a tip${NC}\n"
+    printf "    ny-cli tip --estimate-id \"abc-123\" --amount 20\n"
+    printf '\n'
+    printf "    ${DIM}# Cancel a search${NC}\n"
+    printf "    ny-cli cancel --estimate-id \"abc-123\"\n"
+    printf '\n'
+    printf "    ${DIM}# Check active rides${NC}\n"
+    printf "    ny-cli status --active\n"
+    printf '\n'
+    printf "    ${DIM}# All rides${NC}\n"
+    printf "    ny-cli status --all\n"
+    printf '\n'
+    printf "    ${DIM}# List cancellation reasons${NC}\n"
+    printf "    ny-cli cancellation-reasons --stage OnConfirm\n"
+    printf '\n'
+    printf "    ${DIM}# Cancel a confirmed booking${NC}\n"
+    printf "    ny-cli cancel-booking --booking-id \"abc-123\" --reason-code \"OTHER\" --reason-stage OnConfirm\n"
+    printf '\n'
+    printf "    ${DIM}# Get booking details${NC}\n"
+    printf "    ny-cli booking-details --booking-id \"abc-123\"\n"
+    printf '\n'
+    printf "    ${DIM}# Get live ride status${NC}\n"
+    printf "    ny-cli ride-status --ride-id \"abc-123\"\n"
+    printf '\n'
+    printf "    ${DIM}# Add post-ride tip${NC}\n"
+    printf "    ny-cli post-tip --ride-id \"abc-123\" --amount 50\n"
+    printf '\n'
+    printf "    ${DIM}# Get fare breakdown${NC}\n"
+    printf "    ny-cli price-breakdown --booking-id \"abc-123\"\n"
+    printf '\n'
+    printf "${BOLD}ENVIRONMENT${NC}\n"
+    printf "    NY_API_BASE    Override API base URL (default: https://api.moving.tech/pilot/app/v2)\n"
+    printf '\n'
+    printf "${BOLD}TOKEN${NC}\n"
+    printf "    Stored at: ~/.namma-yatri/token.json\n"
+    printf "    Install jq for best experience: https://jqlang.github.io/jq/\n"
+    printf '\n'
 }
 
 # =============================================================================
