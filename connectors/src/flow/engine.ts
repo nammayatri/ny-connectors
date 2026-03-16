@@ -7,6 +7,7 @@ import { Connector, CommandMessage } from '../connectors/types';
 import { TelegramConnector } from '../connectors/telegram';
 import { WhatsAppConnector } from '../connectors/whatsapp';
 import { config } from '../config';
+import { t, getAllLanguages, isValidLanguage, SupportedLanguage } from '../i18n';
 
 type AnySessionManager = SessionManager | MemorySessionManager;
 
@@ -57,28 +58,60 @@ export class FlowEngine {
     const ctx = await this.getContext(message);
     const input = message.text.trim();
 
-    // Hydrate token from persistent store if not already in session
+    // Hydrate token and language from persistent store if not already in session
+    const userKey = `${message.source}:${message.senderId}`;
     if (!ctx.nyToken) {
-      const userKey = `${message.source}:${message.senderId}`;
       const stored = this.tokenStore.get(userKey);
       if (stored) {
         ctx.nyToken = stored.nyToken;
         ctx.savedLocations = stored.savedLocations;
+        if (!ctx.language && stored.language) ctx.language = stored.language;
       }
     }
+    if (!ctx.language) {
+      const storedLang = this.tokenStore.getLanguage(userKey);
+      if (storedLang) ctx.language = storedLang;
+    }
+    const s = t(ctx.language);
 
     try {
+      // Language selection via button callback
+      const langMatch = input.match(/^lang:(\w+)$/);
+      if (langMatch) {
+        const langCode = langMatch[1];
+        if (isValidLanguage(langCode)) {
+          ctx.language = langCode;
+          ctx.state = 'IDLE';
+          await this.saveContext(message, ctx);
+          this.tokenStore.updateLanguage(userKey, langCode);
+          const newS = t(langCode);
+          await replyWithButtons(
+            newS.languageUpdated(newS.nativeLanguageName) + newS.whatToDo,
+            [[
+              { text: newS.bookARide, data: 'book' },
+              { text: newS.trackRide, data: 'status' },
+            ]]
+          );
+        }
+        return;
+      }
+
+      if (input === 'choose_language' || input === 'more_languages') {
+        await this.handleChooseLanguage(ctx, message, input, reply, replyWithButtons);
+        return;
+      }
+
       // Global commands
-      if (CANCEL_TRIGGERS.some((t) => input.toLowerCase() === t) || input.startsWith('cancel:')) {
+      if (CANCEL_TRIGGERS.some((tr) => input.toLowerCase() === tr) || input.startsWith('cancel:')) {
         await this.handleCancel(ctx, message, input, reply, replyWithButtons);
         return;
       }
 
-      if (STATUS_TRIGGERS.some((t) => input.toLowerCase().includes(t))) {
+      if (STATUS_TRIGGERS.some((tr) => input.toLowerCase().includes(tr))) {
         if (!ctx.nyToken) {
           await replyWithButtons(
-            '🔐 You need to be signed in to track a ride.\n\nWould you like to book a ride instead?',
-            [[{ text: '🚕 Book a Ride', data: 'book' }]]
+            s.needSignIn,
+            [[{ text: s.bookARide, data: 'book' }]]
           );
           return;
         }
@@ -89,10 +122,10 @@ export class FlowEngine {
       if (input === 'main_menu') {
         await this.resetContext(message);
         await replyWithButtons(
-          '👋 Welcome back! What would you like to do?',
+          s.welcomeBack,
           [[
-            { text: '🚕 Book a Ride', data: 'book' },
-            { text: '📍 Track Ride', data: 'status' },
+            { text: s.bookARide, data: 'book' },
+            { text: s.trackRide, data: 'status' },
           ]]
         );
         return;
@@ -114,7 +147,7 @@ export class FlowEngine {
         const yesData = bookingId ? `cancel:${bookingId}` : 'cancel';
 
         // Fetch driver name for a personalised confirmation message
-        let confirmPrompt = '⚠️ Are you sure you want to cancel your ride?';
+        let confirmPrompt = s.cancelConfirm;
         if (bookingId && ctx.nyToken) {
           try {
             const client = new NammaYatriClient(ctx.nyToken);
@@ -127,14 +160,14 @@ export class FlowEngine {
             const driverName = booking?.rideList?.[0]?.driverName || booking?.driverName;
             const vehicle = booking?.rideList?.[0]?.vehicleNumber || booking?.vehicleNumber;
             if (driverName) {
-              confirmPrompt = `⚠️ Cancel ride with *${driverName}*${vehicle ? ` (${vehicle})` : ''}?`;
+              confirmPrompt = s.cancelConfirmWithDriver(driverName, vehicle);
             }
           } catch { /* fall back to generic message */ }
         }
 
         await replyWithButtons(confirmPrompt, [
-          [{ text: '✅ Yes, cancel it', data: yesData }],
-          [{ text: '🔙 No, keep it', data: 'abort_cancel' }],
+          [{ text: s.yesCancelIt, data: yesData }],
+          [{ text: s.noKeepIt, data: 'abort_cancel' }],
         ]);
         return;
       }
@@ -153,12 +186,12 @@ export class FlowEngine {
           const ride = b.rideList?.[0];
           const phone = ride?.driverNumber || b.driverNumber || b.merchantExoPhone;
           if (phone) {
-            await reply(`📞 Driver's number: *${phone}*\n\nYou can call them directly.`);
+            await reply(s.driverPhone(phone));
           } else {
-            await reply(`Driver details are not available yet. Please try again in a moment.`);
+            await reply(s.driverDetailsNotAvailable);
           }
         } else {
-          await reply(`No active ride found.`);
+          await reply(s.noActiveRide);
         }
         return;
       }
@@ -173,6 +206,9 @@ export class FlowEngine {
       switch (ctx.state) {
         case 'IDLE':
           await this.handleIdle(ctx, input, message, reply, replyWithButtons, connector);
+          break;
+        case 'CHOOSING_LANGUAGE':
+          await this.handleChooseLanguage(ctx, message, input, reply, replyWithButtons);
           break;
         case 'AWAITING_CONTACT':
           await this.handleAwaitingContact(ctx, message, reply, replyWithButtons, connector!);
@@ -199,26 +235,25 @@ export class FlowEngine {
           await this.handleShowingEstimates(ctx, input, message, reply, replyWithButtons, connector!);
           break;
         case 'BOOKING':
-          await reply('Your ride is being booked. Please wait or send "cancel" to cancel.');
+          await reply(s.rideBeingBooked);
           break;
         case 'TRACKING':
           await this.handleStatus(ctx, reply, replyWithButtons);
           break;
         default:
           await this.saveContext(message, INITIAL_CONTEXT);
-          await reply('Something went wrong. Send "book" to start over.');
+          await reply(s.somethingWentWrong);
       }
     } catch (err: any) {
       console.error(`[flow] Error in state ${ctx.state}:`, err.message);
       if (err.message?.includes('401')) {
         ctx.nyToken = undefined;
         ctx.state = 'IDLE';
-        const userKey = `${message.source}:${message.senderId}`;
         this.tokenStore.delete(userKey);
         await this.saveContext(message, ctx);
-        await reply('Session expired. Send "book" to re-authenticate.');
+        await reply(s.sessionExpired);
       } else {
-        await reply(`Error: ${err.message}\nSend "cancel" to start over.`);
+        await reply(s.error(err.message));
       }
     }
   }
@@ -227,11 +262,12 @@ export class FlowEngine {
 
   private async handleIdle(
     ctx: FlowContext, input: string, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
     connector?: Connector
   ) {
-    if (!BOOK_TRIGGERS.some((t) => input.toLowerCase().includes(t))) {
+    const s = t(ctx.language);
+    if (!BOOK_TRIGGERS.some((tr) => input.toLowerCase().includes(tr))) {
       // Handle quick route callbacks from IDLE state
       const quickMatch = input.match(/^quick:(.+)->(.+)$/);
       if (quickMatch && ctx.nyToken) {
@@ -239,10 +275,11 @@ export class FlowEngine {
         return;
       }
       await replyWithButtons(
-        '👋 Welcome! I\'m your Namma Yatri ride assistant.\n\nWhat would you like to do?',
+        s.welcomeMessage,
         [[
-          { text: '🚕 Book a Ride', data: 'book' },
-          { text: '📍 Track Ride', data: 'status' },
+          { text: s.bookARide, data: 'book' },
+          { text: s.trackRide, data: 'status' },
+          { text: s.chooseLanguage, data: 'choose_language' },
         ]]
       );
       return;
@@ -266,31 +303,64 @@ export class FlowEngine {
 
       ctx.state = 'AWAITING_PHONE';
       await this.saveContext(msg, ctx);
-      await reply('First time? Enter your 10-digit mobile number:');
+      await reply(s.enterPhone);
       return;
     }
 
     await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
   }
 
+  private async handleChooseLanguage(
+    ctx: FlowContext, msg: CommandMessage,
+    input: string,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
+  ) {
+    const s = t(ctx.language);
+    const allLangs = getAllLanguages();
+
+    if (input === 'choose_language') {
+      // Show quick picks: Hindi, Kannada + "More languages"
+      ctx.state = 'CHOOSING_LANGUAGE';
+      await this.saveContext(msg, ctx);
+      await replyWithButtons(s.selectLanguage, [
+        [{ text: '🇮🇳 हिन्दी', data: 'lang:hi' }],
+        [{ text: '🇮🇳 ಕನ್ನಡ', data: 'lang:kn' }],
+        [{ text: s.moreLanguages, data: 'more_languages' }],
+      ]);
+      return;
+    }
+
+    if (input === 'more_languages') {
+      // Show all languages as a list
+      const buttons = allLangs.map((lang) => ([{
+        text: `${lang.nativeName} (${lang.name})`,
+        data: `lang:${lang.code}`,
+      }]));
+      await replyWithButtons(s.selectLanguage, buttons);
+      return;
+    }
+  }
+
   private async handleAwaitingContact(
     ctx: FlowContext, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
     connector: Connector
   ) {
+    const s = t(ctx.language);
     // Verify it's a contact message with verified ownership
     if (!msg.metadata?.isContact) {
-      await reply('Please tap the button below to share your phone number.');
+      await reply(s.sharePhone);
       return;
     }
 
     if (!msg.metadata?.isOwnContact) {
-      await reply('Please share your own phone number, not someone else\'s.');
+      await reply(s.shareOwnPhone);
       if (connector instanceof TelegramConnector) {
         await connector.requestContact(
           this.getReplyTarget(msg, connector),
-          'Tap the button to share your number:'
+          s.sharePhonePrompt
         );
       }
       return;
@@ -303,7 +373,7 @@ export class FlowEngine {
     }
 
     if (phone.length !== 10) {
-      await reply('Could not read your phone number. Please try again.');
+      await reply(s.couldNotReadPhone);
       return;
     }
 
@@ -330,45 +400,48 @@ export class FlowEngine {
         phone,
         savedLocations: ctx.savedLocations,
         authenticatedAt: new Date().toISOString(),
+        language: ctx.language,
       });
 
       if (connector instanceof TelegramConnector) {
         await connector.removeKeyboard(
           this.getReplyTarget(msg, connector),
-          'You\'re all set! Let\'s book a ride.'
+          s.allSet
         );
       } else {
-        await reply('You\'re all set! Let\'s book a ride.');
+        await reply(s.allSet);
       }
 
       await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
     } catch (err: any) {
-      await reply(`Setup failed: ${err.message}\nSend "book" to try again.`);
+      await reply(s.setupFailed(err.message));
       ctx.state = 'IDLE';
       await this.saveContext(msg, ctx);
     }
   }
 
-  private async handleAwaitingPhone(ctx: FlowContext, input: string, msg: CommandMessage, reply: (t: string) => Promise<void>) {
+  private async handleAwaitingPhone(ctx: FlowContext, input: string, msg: CommandMessage, reply: (txt: string) => Promise<void>) {
+    const s = t(ctx.language);
     let phone = input.replace(/[^0-9]/g, '');
     if (phone.length > 10 && phone.startsWith('91')) {
       phone = phone.substring(2);
     }
     if (phone.length !== 10) {
-      await reply('Invalid phone number. Enter a valid 10-digit number:');
+      await reply(s.invalidPhone);
       return;
     }
     ctx.phone = phone;
     ctx.state = 'AWAITING_ACCESS_CODE';
     await this.saveContext(msg, ctx);
-    await reply('Enter your access code (Namma Yatri app > Profile > About Us):');
+    await reply(s.enterAccessCode);
   }
 
   private async handleAwaitingAccessCode(
     ctx: FlowContext, input: string, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     const code = input.trim();
     try {
       const { token, personId: authPersonId } = await NammaYatriClient.authenticate(ctx.phone!, code);
@@ -395,12 +468,13 @@ export class FlowEngine {
         phone: ctx.phone!,
         savedLocations: ctx.savedLocations,
         authenticatedAt: new Date().toISOString(),
+        language: ctx.language,
       });
 
-      await reply('You\'re all set! You won\'t need to do this again.');
+      await reply(s.authSuccess);
       await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
     } catch (err: any) {
-      await reply(`Authentication failed: ${err.message}\nEnter your phone number to try again:`);
+      await reply(s.authFailed(err.message));
       ctx.state = 'AWAITING_PHONE';
       await this.saveContext(msg, ctx);
     }
@@ -408,9 +482,10 @@ export class FlowEngine {
 
   private async promptForOrigin(
     ctx: FlowContext, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     ctx.state = 'AWAITING_ORIGIN';
     await this.saveContext(msg, ctx);
 
@@ -421,10 +496,10 @@ export class FlowEngine {
       const work = locs.find((l) => l.tag.toLowerCase() === 'work');
       const [a, b2] = (home && work) ? [home, work] : [locs[0], locs[1]];
 
-      await replyWithButtons('Where would you like to go?', [
+      await replyWithButtons(s.whereToGo, [
         [{ text: `🏠 ${a.tag} → ${b2.tag}`, data: `quick:${a.tag}->${b2.tag}` }],
         [{ text: `💼 ${b2.tag} → ${a.tag}`, data: `quick:${b2.tag}->${a.tag}` }],
-        [{ text: '➕ More options', data: 'more_options' }],
+        [{ text: s.moreOptions, data: 'more_options' }],
       ]);
       return;
     }
@@ -434,9 +509,10 @@ export class FlowEngine {
 
   private async promptForOriginFull(
     ctx: FlowContext, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     if (ctx.savedLocations && ctx.savedLocations.length >= 2) {
       const buttons: { text: string; data: string }[][] = [];
 
@@ -451,32 +527,33 @@ export class FlowEngine {
       }
 
       buttons.push(...ctx.savedLocations.map((loc) => ([{
-        text: `📍 From: ${loc.tag}`,
+        text: s.fromLabel(loc.tag),
         data: `origin:${loc.tag}`,
       }])));
 
-      await replyWithButtons('Where would you like to go?\n\nQuick routes or pick a location.\nYou can also type a place name:', buttons);
+      await replyWithButtons(s.whereToGoWithRoutes, buttons);
     } else if (ctx.savedLocations?.length) {
       const buttons = ctx.savedLocations.map((loc) => ([{
-        text: `📍 From: ${loc.tag}`,
+        text: s.fromLabel(loc.tag),
         data: `origin:${loc.tag}`,
       }]));
-      await replyWithButtons('Pick a saved location or type a place name:', buttons);
+      await replyWithButtons(s.pickSavedOrType, buttons);
     } else {
-      await reply('Where are you picking up from?\nType a place name to search:');
+      await reply(s.typePickupPlace);
     }
   }
 
   private async handleQuickRoute(
     ctx: FlowContext, fromTag: string, toTag: string, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     const from = ctx.savedLocations?.find((l) => l.tag === fromTag);
     const to = ctx.savedLocations?.find((l) => l.tag === toTag);
 
     if (!from || !to) {
-      await reply('Could not find those locations. Send "book" to try again.');
+      await reply(s.couldNotFindLocations);
       return;
     }
 
@@ -498,9 +575,10 @@ export class FlowEngine {
 
   private async handleAwaitingOrigin(
     ctx: FlowContext, input: string, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     // "More options" expands the full saved-locations list
     if (input === 'more_options') {
       await this.promptForOriginFull(ctx, msg, reply, replyWithButtons);
@@ -529,7 +607,7 @@ export class FlowEngine {
         },
       };
       ctx.originTag = saved.tag;
-      await reply(`Pickup: ${saved.tag}`);
+      await reply(s.pickup(saved.tag));
       ctx.state = 'AWAITING_DESTINATION';
       await this.saveContext(msg, ctx);
       await this.promptForDestination(ctx, msg, reply, replyWithButtons);
@@ -539,7 +617,7 @@ export class FlowEngine {
     // Search places
     const places = await client.searchPlaces(searchTerm);
     if (!places.length) {
-      await reply('No places found. Try a different search:');
+      await reply(s.noPlacesFound);
       return;
     }
 
@@ -551,20 +629,21 @@ export class FlowEngine {
       text: p.description.substring(0, 60),
       data: `pick_origin:${i}`,
     }]));
-    await replyWithButtons('Select pickup location:', buttons);
+    await replyWithButtons(s.selectPickup, buttons);
   }
 
   private async handleConfirmingOrigin(
     ctx: FlowContext, input: string, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     // Handle button callback
     const btnMatch = input.match(/^pick_origin:(\d+)$/);
     const idx = btnMatch ? parseInt(btnMatch[1]) : parseInt(input) - 1;
 
     if (isNaN(idx) || idx < 0 || idx >= (ctx.originOptions?.length || 0)) {
-      await reply(`Invalid choice. Pick 1-${ctx.originOptions?.length}:`);
+      await reply(s.invalidChoice(ctx.originOptions?.length || 0));
       return;
     }
 
@@ -573,7 +652,7 @@ export class FlowEngine {
     const details = await client.getPlaceDetails(selected.placeId);
 
     ctx.origin = details;
-    await reply(`Pickup: ${selected.description}`);
+    await reply(s.pickup(selected.description));
 
     ctx.state = 'AWAITING_DESTINATION';
     await this.saveContext(msg, ctx);
@@ -582,9 +661,10 @@ export class FlowEngine {
 
   private async promptForDestination(
     ctx: FlowContext, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     // Filter out the origin from saved locations
     const destinations = ctx.savedLocations?.filter(
       (l) => l.tag.toLowerCase() !== (ctx.originTag || '').toLowerCase()
@@ -595,17 +675,18 @@ export class FlowEngine {
         text: `📍 ${loc.tag}`,
         data: `dest:${loc.tag}`,
       }]));
-      await replyWithButtons('Where to?\n\nPick a location or type a place name:', buttons);
+      await replyWithButtons(s.whereToWithSaved, buttons);
     } else {
-      await reply('Where to?\nType a place name to search:');
+      await reply(s.whereTo);
     }
   }
 
   private async handleAwaitingDestination(
     ctx: FlowContext, input: string, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     const client = new NammaYatriClient(ctx.nyToken!);
 
     // Handle button callback (dest:TagName)
@@ -626,14 +707,14 @@ export class FlowEngine {
           state: saved.state,
         },
       };
-      await reply(`Drop: ${saved.tag}`);
+      await reply(s.drop(saved.tag));
       await this.searchAndShowEstimates(ctx, msg, reply, replyWithButtons);
       return;
     }
 
     const places = await client.searchPlaces(searchTerm);
     if (!places.length) {
-      await reply('No places found. Try a different search:');
+      await reply(s.noPlacesFound);
       return;
     }
 
@@ -645,19 +726,20 @@ export class FlowEngine {
       text: p.description.substring(0, 60),
       data: `pick_dest:${i}`,
     }]));
-    await replyWithButtons('Select drop location:', buttons);
+    await replyWithButtons(s.selectDrop, buttons);
   }
 
   private async handleConfirmingDestination(
     ctx: FlowContext, input: string, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     const btnMatch = input.match(/^pick_dest:(\d+)$/);
     const idx = btnMatch ? parseInt(btnMatch[1]) : parseInt(input) - 1;
 
     if (isNaN(idx) || idx < 0 || idx >= (ctx.destinationOptions?.length || 0)) {
-      await reply(`Invalid choice. Pick 1-${ctx.destinationOptions?.length}:`);
+      await reply(s.invalidChoice(ctx.destinationOptions?.length || 0));
       return;
     }
 
@@ -666,16 +748,17 @@ export class FlowEngine {
     const details = await client.getPlaceDetails(selected.placeId);
 
     ctx.destination = details;
-    await reply(`Drop: ${selected.description}`);
+    await reply(s.drop(selected.description));
     await this.searchAndShowEstimates(ctx, msg, reply, replyWithButtons);
   }
 
   private async searchAndShowEstimates(
     ctx: FlowContext, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
-    await reply('Searching for rides...');
+    const s = t(ctx.language);
+    await reply(s.searchingRides);
 
     const client = new NammaYatriClient(ctx.nyToken!);
 
@@ -697,7 +780,7 @@ export class FlowEngine {
     if (!estimates.length) {
       ctx.state = 'IDLE';
       await this.saveContext(msg, ctx);
-      await reply('No rides available right now. Send "book" to retry.');
+      await reply(s.noRidesAvailable);
       return;
     }
 
@@ -730,7 +813,7 @@ export class FlowEngine {
         console.log(`[history] quick picks: ${quickPicks.map((p) => p.text).join(', ') || 'none'}`);
         if (quickPicks.length > 0) {
           await replyWithButtons(
-            '🕐 Based on your past rides:',
+            s.basedOnPastRides,
             quickPicks.map((b) => [b])
           );
         }
@@ -739,7 +822,7 @@ export class FlowEngine {
       }
     }
 
-    await replyWithButtons('Here are the available rides for your route:', allRideButtons);
+    await replyWithButtons(s.availableRidesForRoute, allRideButtons);
   }
 
   private buildQuickPicksFromHistory(
@@ -778,15 +861,16 @@ export class FlowEngine {
 
   private async handleShowingEstimates(
     ctx: FlowContext, input: string, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
     connector: Connector
   ) {
+    const s = t(ctx.language);
     const btnMatch = input.match(/^estimate:(\d+)$/);
     const idx = btnMatch ? parseInt(btnMatch[1]) : parseInt(input) - 1;
 
     if (isNaN(idx) || idx < 0 || idx >= (ctx.estimates?.length || 0)) {
-      await reply(`Invalid choice. Pick 1-${ctx.estimates?.length}:`);
+      await reply(s.invalidChoice(ctx.estimates?.length || 0));
       return;
     }
 
@@ -797,11 +881,9 @@ export class FlowEngine {
     ctx.state = 'BOOKING';
     await this.saveContext(msg, ctx);
 
-    await reply(`Booking ${selected.serviceTierName} (₹${selected.estimatedFare})...`);
+    await reply(s.booking(selected.serviceTierName, selected.estimatedFare));
 
     const client = new NammaYatriClient(ctx.nyToken!);
-    // Capture timestamp immediately before selecting — any booking created at or after
-    // this moment is definitively the one we just triggered.
     const selectCalledAt = new Date();
     ctx.selectStartedAt = selectCalledAt.toISOString();
     await client.selectEstimate(selected.id);
@@ -811,7 +893,6 @@ export class FlowEngine {
 
     console.log(`[flow] selectCalledAt=${selectCalledAt.toISOString()} — polling for bookings created after this`);
 
-    // 90 attempts × 2s = 3 min; notify every 15 polls (30s)
     const POLL_ATTEMPTS = 90;
     const POLL_INTERVAL = 2000;
     const POLL_NOTIFY_EVERY = 15;
@@ -845,7 +926,7 @@ export class FlowEngine {
 
       if (i > 0 && i % POLL_NOTIFY_EVERY === 0) {
         const elapsed = Math.round(((i + 1) * POLL_INTERVAL) / 1000);
-        await reply(`⏳ Still searching for a driver nearby... (${elapsed}s)\n\nSend "cancel" to stop.`);
+        await reply(s.stillSearching(elapsed));
       }
     }
 
@@ -854,17 +935,16 @@ export class FlowEngine {
       return;
     }
 
-    // No driver found — keep context (origin/dest/tier) and offer retry options
     const noDriverCtx = await this.getContext(msg);
     noDriverCtx.state = 'TRACKING';
     await this.saveContext(msg, noDriverCtx);
 
     await replyWithButtons(
-      `😔 No driver found for *${selected.serviceTierName}* after 3 minutes.\n\nWhat would you like to do?`,
+      s.noDriverFound(selected.serviceTierName),
       [
-        [{ text: '🔄 Retry same vehicle', data: 'retry_same' }],
-        [{ text: '🚗 Try a different vehicle', data: 'retry_vehicle' }],
-        [{ text: '🏠 Main menu', data: 'main_menu' }],
+        [{ text: s.retrySameVehicle, data: 'retry_same' }],
+        [{ text: s.tryDifferentVehicle, data: 'retry_vehicle' }],
+        [{ text: s.mainMenu, data: 'main_menu' }],
       ]
     );
   }
@@ -873,9 +953,11 @@ export class FlowEngine {
     booking: any,
     tierName: string,
     msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const ctx = await this.getContext(msg);
+    const s = t(ctx.language);
     // Driver info may be on the booking directly or in rideList[0]
     const ride = booking.rideList?.[0];
 
@@ -884,7 +966,7 @@ export class FlowEngine {
 
     const driverName = ride?.driverName || booking.driverName;
     const vehicleNumber = ride?.vehicleNumber || booking.vehicleNumber;
-    const driverPhone = ride?.driverNumber || booking.driverNumber || booking.merchantExoPhone;
+    const driverPhoneNum = ride?.driverNumber || booking.driverNumber || booking.merchantExoPhone;
     const otp = ride?.rideOtp || booking.rideOtp;
     const hasDriver = !!(driverName || vehicleNumber);
 
@@ -892,35 +974,36 @@ export class FlowEngine {
 
     let confirmText: string;
     if (hasDriver) {
-      const lines = [`🎉 Ride confirmed!\n`, `🚗 *${tierName}*`];
-      if (driverName) lines.push(`👤 Driver: *${driverName}*`);
-      if (vehicleNumber) lines.push(`🔢 Vehicle: *${vehicleNumber}*`);
-      if (driverPhone) lines.push(`📞 Phone: *${driverPhone}*`);
-      if (otp) lines.push(`🔑 OTP: *${otp}*`);
-      lines.push(`\n📲 Track your ride:\n${trackingLink}`);
+      const lines = [s.rideConfirmed, `🚗 *${tierName}*`];
+      if (driverName) lines.push(s.driverLabel(driverName));
+      if (vehicleNumber) lines.push(s.vehicleLabel(vehicleNumber));
+      if (driverPhoneNum) lines.push(s.phoneLabel(driverPhoneNum));
+      if (otp) lines.push(s.otpLabel(otp));
+      lines.push(`\n${s.trackYourRide}\n${trackingLink}`);
       confirmText = lines.join('\n');
     } else {
-      confirmText = `✅ Ride booked!\n\n🚗 *${tierName}*\n\nWaiting for driver assignment...\n\n📲 Track:\n${trackingLink}`;
+      confirmText = `${s.rideBooked}\n\n🚗 *${tierName}*\n\n${s.waitingForDriver}\n\n${s.track}\n${trackingLink}`;
     }
 
-    console.log(`[flow] Sending booking confirmation: bookingId=${booking.id} hasDriver=${hasDriver} driverPhone=${!!driverPhone} otp=${!!otp} status=${booking.status}`);
+    console.log(`[flow] Sending booking confirmation: bookingId=${booking.id} hasDriver=${hasDriver} driverPhone=${!!driverPhoneNum} otp=${!!otp} status=${booking.status}`);
 
     const buttons: { text: string; data: string }[][] = [];
-    if (hasDriver && driverPhone) {
-      buttons.push([{ text: '📞 Call Driver', data: 'call_driver' }]);
+    if (hasDriver && driverPhoneNum) {
+      buttons.push([{ text: s.callDriver, data: 'call_driver' }]);
     }
-    buttons.push([{ text: '❌ Cancel Ride', data: `cancel_confirm:${booking.id}` }]);
+    buttons.push([{ text: s.cancelRide, data: `cancel_confirm:${booking.id}` }]);
 
     await replyWithButtons(confirmText, buttons);
   }
 
   private async handleRetrySame(
     ctx: FlowContext, msg: CommandMessage,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
     connector: Connector
   ) {
-    await reply(`🔄 Retrying ${ctx.selectedServiceTier || 'your ride'}...`);
+    const s = t(ctx.language);
+    await reply(s.retrying(ctx.selectedServiceTier || 'your ride'));
 
     const client = new NammaYatriClient(ctx.nyToken!);
     const searchId = await client.searchRide(ctx.origin!, ctx.destination!);
@@ -935,10 +1018,10 @@ export class FlowEngine {
 
     if (!estimates.length) {
       await replyWithButtons(
-        '😔 No rides available right now. What would you like to do?',
+        s.noRidesAvailableRetry,
         [
-          [{ text: '🔄 Try again', data: 'retry_vehicle' }],
-          [{ text: '🏠 Main menu', data: 'main_menu' }],
+          [{ text: s.tryAgain, data: 'retry_vehicle' }],
+          [{ text: s.mainMenu, data: 'main_menu' }],
         ]
       );
       return;
@@ -946,14 +1029,12 @@ export class FlowEngine {
 
     ctx.estimates = estimates;
 
-    // Find the same vehicle tier
     const matchIdx = estimates.findIndex(
       (e) => e.serviceTierName === ctx.selectedServiceTier || e.vehicleVariant === ctx.selectedServiceTier
     );
 
     if (matchIdx === -1) {
-      // Tier not available — fall back to showing all options
-      await reply(`${ctx.selectedServiceTier} is not available right now. Here are the available options:`);
+      await reply(s.tierNotAvailable(ctx.selectedServiceTier || ''));
       ctx.state = 'SHOWING_ESTIMATES';
       await this.saveContext(msg, ctx);
       const buttons = estimates.map((e, i) => {
@@ -961,11 +1042,10 @@ export class FlowEngine {
         const fareText = range.minFare === range.maxFare ? `₹${range.minFare}` : `₹${range.minFare}–₹${range.maxFare}`;
         return [{ text: `${e.serviceTierName} ${fareText}`, data: `estimate:${i}`, description: e.serviceTierName }];
       });
-      await replyWithButtons('Available rides:', buttons);
+      await replyWithButtons(s.availableRides, buttons);
       return;
     }
 
-    // Auto-select the matched tier
     const matchInput = `estimate:${matchIdx}`;
     ctx.state = 'SHOWING_ESTIMATES';
     await this.saveContext(msg, ctx);
@@ -974,31 +1054,30 @@ export class FlowEngine {
 
   private async handleStatus(
     ctx: FlowContext,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons?: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons?: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     const client = new NammaYatriClient(ctx.nyToken!);
 
-    // Within an active booking session use the precise selectStartedAt.
-    // For general "Track Ride", fall back to last 24 hours to avoid surfacing stale bookings.
     const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
     const createdAfter = ctx.selectStartedAt
       ? new Date(ctx.selectStartedAt)
       : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
 
     const allBookings = await client.getActiveBookings(createdAfter);
-    const bookings = allBookings.sort((a: any, b: any) =>
-      new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
+    const bookings = allBookings.sort((a: any, b2: any) =>
+      new Date(b2.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
     );
 
     if (!bookings.length) {
       if (replyWithButtons) {
         await replyWithButtons(
-          '🔍 No active rides found.\n\nWould you like to book one?',
-          [[{ text: '🚕 Book a Ride', data: 'book' }]]
+          s.noActiveRidesBook,
+          [[{ text: s.bookARide, data: 'book' }]]
         );
       } else {
-        await reply('No active rides found. Send "book" to start one.');
+        await reply(s.noActiveRides);
       }
       return;
     }
@@ -1007,21 +1086,21 @@ export class FlowEngine {
     const ride = b.rideList?.[0];
     const driverName = b.driverName || ride?.driverName;
     const vehicleNumber = b.vehicleNumber || ride?.vehicleNumber;
-    const driverPhone = ride?.driverNumber || b.driverNumber || b.merchantExoPhone;
+    const driverPhoneNum = ride?.driverNumber || b.driverNumber || b.merchantExoPhone;
     const otp = ride?.rideOtp || b.rideOtp;
     const trackingLink = `https://nammayatri.in/track/${b.id}`;
 
-    const lines = [`📍 Active Ride\n`];
-    if (driverName) lines.push(`👤 Driver: *${driverName}*`);
-    if (vehicleNumber) lines.push(`🔢 Vehicle: *${vehicleNumber}*`);
-    if (driverPhone) lines.push(`📞 Phone: *${driverPhone}*`);
-    if (otp) lines.push(`🔑 OTP: *${otp}*`);
-    lines.push(`\n📲 Track:\n${trackingLink}`);
+    const lines = [s.activeRide];
+    if (driverName) lines.push(s.driverLabel(driverName));
+    if (vehicleNumber) lines.push(s.vehicleLabel(vehicleNumber));
+    if (driverPhoneNum) lines.push(s.phoneLabel(driverPhoneNum));
+    if (otp) lines.push(s.otpLabel(otp));
+    lines.push(`\n${s.track}\n${trackingLink}`);
 
     if (replyWithButtons) {
       const buttons: { text: string; data: string }[][] = [];
-      if (driverPhone) buttons.push([{ text: '📞 Call Driver', data: 'call_driver' }]);
-      buttons.push([{ text: '❌ Cancel Ride', data: `cancel_confirm:${b.id}` }]);
+      if (driverPhoneNum) buttons.push([{ text: s.callDriver, data: 'call_driver' }]);
+      buttons.push([{ text: s.cancelRide, data: `cancel_confirm:${b.id}` }]);
       await replyWithButtons(lines.join('\n'), buttons);
     } else {
       await reply(lines.join('\n'));
@@ -1031,24 +1110,22 @@ export class FlowEngine {
   private async handleCancel(
     ctx: FlowContext, msg: CommandMessage,
     input: string,
-    reply: (t: string) => Promise<void>,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const s = t(ctx.language);
     const client = ctx.nyToken ? new NammaYatriClient(ctx.nyToken) : null;
 
-    // Extract explicit bookingId if provided via button (cancel:<bookingId>)
     const explicitBookingId = input.startsWith('cancel:') ? input.slice('cancel:'.length) : null;
 
     try {
-      // Cancel estimate search (before booking)
       if (ctx.state === 'SHOWING_ESTIMATES' && ctx.estimates?.length && client) {
         await Promise.allSettled(ctx.estimates.map((e) => client!.cancelSearch(e.id)));
         await this.resetContext(msg);
-        await this.replyWithMenu('Ride search cancelled.', replyWithButtons);
+        await this.replyWithMenu(s.rideSearchCancelled, msg, replyWithButtons);
         return;
       }
 
-      // For any state with a token, try to find and cancel the active booking
       if (client) {
         ctx.cancelRequested = true;
         await this.saveContext(msg, ctx);
@@ -1059,7 +1136,6 @@ export class FlowEngine {
           : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
 
         const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
-        // Priority: explicit bookingId from button > activeBookingId in context > newest
         const booking = explicitBookingId
           ? (bookings.find((b: any) => b.id === explicitBookingId) || null)
           : ctx.activeBookingId
@@ -1073,56 +1149,58 @@ export class FlowEngine {
 
         if (bookingStatus === 'COMPLETED' || rideStatus === 'COMPLETED') {
           await this.resetContext(msg);
-          await this.replyWithMenu('This ride has already been completed and cannot be cancelled.', replyWithButtons);
+          await this.replyWithMenu(s.rideCompleted, msg, replyWithButtons);
           return;
         }
         if (bookingStatus === 'CANCELLED' || rideStatus === 'CANCELLED') {
           await this.resetContext(msg);
-          await this.replyWithMenu('This ride is already cancelled.', replyWithButtons);
+          await this.replyWithMenu(s.rideAlreadyCancelled, msg, replyWithButtons);
           return;
         }
         if (rideStatus === 'INPROGRESS') {
           ctx.cancelRequested = false;
           await this.saveContext(msg, ctx);
-          await reply('⚠️ Your ride is already in progress and cannot be cancelled.');
+          await reply(s.rideInProgress);
           return;
         }
 
         if (booking?.id) {
           await client.cancelRide(booking.id, booking.status);
           await this.resetContext(msg);
-          await this.replyWithMenu('Ride cancelled. ✅', replyWithButtons);
+          await this.replyWithMenu(s.rideCancelled, msg, replyWithButtons);
           return;
         }
 
-        // No active booking found — cancel pending search if any
         if (ctx.selectedEstimateId) {
           await client.cancelSearch(ctx.selectedEstimateId).catch(() => {});
           await this.resetContext(msg);
-          await this.replyWithMenu('Ride search cancelled.', replyWithButtons);
+          await this.replyWithMenu(s.rideSearchCancelled, msg, replyWithButtons);
           return;
         }
       }
     } catch (err: any) {
       console.error(`[cancel] failed: ${err.message}`);
       await this.resetContext(msg);
-      await this.replyWithMenu(`Could not cancel: ${err.message}`, replyWithButtons);
+      await this.replyWithMenu(s.cancelFailed(err.message), msg, replyWithButtons);
       return;
     }
 
     await this.resetContext(msg);
-    await this.replyWithMenu('Cancelled.', replyWithButtons);
+    await this.replyWithMenu(s.cancelled, msg, replyWithButtons);
   }
 
   private async replyWithMenu(
     prefix: string,
-    replyWithButtons: (t: string, b: { text: string; data: string }[][]) => Promise<void>
+    msg: CommandMessage,
+    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
   ) {
+    const ctx = await this.getContext(msg);
+    const s = t(ctx.language);
     await replyWithButtons(
-      `${prefix}\n\nWhat would you like to do?`,
+      `${prefix}${s.whatToDo}`,
       [[
-        { text: '🚕 Book a Ride', data: 'book' },
-        { text: '📍 Track Ride', data: 'status' },
+        { text: s.bookARide, data: 'book' },
+        { text: s.trackRide, data: 'status' },
       ]]
     );
   }
@@ -1131,7 +1209,8 @@ export class FlowEngine {
     const ctx = await this.getContext(msg);
     const token = ctx.nyToken;
     const saved = ctx.savedLocations;
-    const newCtx: FlowContext = { ...INITIAL_CONTEXT, nyToken: token, savedLocations: saved };
+    const lang = ctx.language;
+    const newCtx: FlowContext = { ...INITIAL_CONTEXT, nyToken: token, savedLocations: saved, language: lang };
     await this.saveContext(msg, newCtx);
   }
 
