@@ -1,0 +1,13 @@
+#!/bin/sh
+
+# Namma Yatri TUI - Executable wrapper
+# This script runs the compiled TUI application
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Navigate to the package root (parent of bin/)
+PACKAGE_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Run the compiled CLI entry point
+exec node "${PACKAGE_ROOT}/dist/cli.js" "$@"
