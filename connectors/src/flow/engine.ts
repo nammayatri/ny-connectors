@@ -6,6 +6,7 @@ import { TokenStore } from '../session/token-store';
 import { Connector, CommandMessage } from '../connectors/types';
 import { TelegramConnector } from '../connectors/telegram';
 import { WhatsAppConnector } from '../connectors/whatsapp';
+import { SlackConnector } from '../connectors/slack';
 import { config } from '../config';
 import { t, getAllLanguages, isValidLanguage, SupportedLanguage } from '../i18n';
 
@@ -31,7 +32,7 @@ export class FlowEngine {
   async handleMessage(message: CommandMessage, connector: Connector): Promise<void> {
     const chatId = this.getReplyTarget(message, connector);
     const reply = (text: string) => connector.sendMessage(chatId, text);
-    const replyWithButtons = (text: string, buttons: { text: string; data: string }[][]) => {
+    const replyWithButtons = (text: string, buttons: { text: string; data: string; description?: string }[][]) => {
       if (connector instanceof TelegramConnector) {
         const tgButtons = buttons.map((row) =>
           row.map((b) => ({ text: b.text, callback_data: b.data }))
@@ -42,10 +43,15 @@ export class FlowEngine {
         const flat = buttons.flat();
         return connector.sendWithButtons(chatId, text, flat);
       }
+      if (connector instanceof SlackConnector) {
+        const flat = buttons.flat();
+        return connector.sendWithButtons(chatId, text, flat);
+      }
       // Fallback: show numbered list
       let fallbackText = text + '\n';
       buttons.flat().forEach((b, i) => {
         fallbackText += `\n${i + 1}. ${b.text}`;
+        if (b.description) fallbackText += ` — ${b.description}`;
       });
       return connector.sendMessage(chatId, fallbackText);
     };
@@ -115,7 +121,7 @@ export class FlowEngine {
           );
           return;
         }
-        await this.handleStatus(ctx, reply, replyWithButtons);
+        await this.handleStatus(ctx, message, reply, replyWithButtons);
         return;
       }
 
@@ -173,7 +179,95 @@ export class FlowEngine {
       }
 
       if (input === 'abort_cancel') {
-        await this.handleStatus(ctx, reply, replyWithButtons);
+        await this.handleStatus(ctx, message, reply, replyWithButtons);
+        return;
+      }
+
+      // SOS confirmation prompt
+      if (input === 'sos_confirm' && ctx.nyToken) {
+        ctx.state = 'CONFIRMING_SOS';
+        await this.saveContext(message, ctx);
+        await replyWithButtons(s.sosConfirm, [
+          [{ text: s.yesTriggerSOS, data: 'sos_trigger' }],
+          [{ text: s.noGoBack, data: 'sos_cancel' }],
+        ]);
+        return;
+      }
+
+      // SOS trigger — actually call the API
+      if (input === 'sos_trigger' && ctx.nyToken) {
+        try {
+          const client = new NammaYatriClient(ctx.nyToken);
+          const createdAfter = ctx.selectStartedAt ? new Date(ctx.selectStartedAt) : undefined;
+          const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
+          const booking = bookings[0];
+          const rideId = booking?.rideList?.[0]?.id;
+          if (rideId) {
+            const sosId = await client.triggerSOS(rideId);
+            ctx.sosId = sosId;
+            ctx.state = 'TRACKING';
+            await this.saveContext(message, ctx);
+            await replyWithButtons(s.sosTriggered, [
+              [{ text: s.markSafeButton, data: 'mark_safe_confirm' }],
+            ]);
+          } else {
+            await reply(s.sosFailed('No active ride found'));
+            ctx.state = 'TRACKING';
+            await this.saveContext(message, ctx);
+          }
+        } catch (err: any) {
+          await reply(s.sosFailed(err.message));
+          ctx.state = 'TRACKING';
+          await this.saveContext(message, ctx);
+        }
+        return;
+      }
+
+      // Mark as Safe — double confirmation prompt
+      if (input === 'mark_safe_confirm' && ctx.nyToken && ctx.sosId) {
+        ctx.state = 'CONFIRMING_MARK_SAFE';
+        await this.saveContext(message, ctx);
+        await replyWithButtons(s.markSafeConfirm, [
+          [{ text: s.yesMarkSafe, data: 'mark_safe_trigger' }],
+          [{ text: s.noGoBack, data: 'mark_safe_cancel' }],
+        ]);
+        return;
+      }
+
+      // Mark as Safe — actually call the API
+      if (input === 'mark_safe_trigger' && ctx.nyToken && ctx.sosId) {
+        try {
+          const client = new NammaYatriClient(ctx.nyToken);
+          await client.markRideAsSafe(ctx.sosId);
+          ctx.sosId = undefined;
+          await reply(s.markedSafe);
+        } catch (err: any) {
+          await reply(s.markSafeFailed(err.message));
+        }
+        ctx.state = 'TRACKING';
+        await this.saveContext(message, ctx);
+        return;
+      }
+
+      // Mark Safe cancelled — go back to tracking
+      if (input === 'mark_safe_cancel') {
+        ctx.state = 'TRACKING';
+        await this.saveContext(message, ctx);
+        await this.handleTracking(ctx, message, reply, replyWithButtons);
+        return;
+      }
+
+      // Call 112 — provide the number
+      if (input === 'call_112') {
+        await reply('📞 Emergency helpline: *112*\n\nPlease call 112 directly for immediate assistance.');
+        return;
+      }
+
+      // SOS cancelled — go back to ride status
+      if (input === 'sos_cancel') {
+        ctx.state = 'TRACKING';
+        await this.saveContext(message, ctx);
+        await this.handleTracking(ctx, message, reply, replyWithButtons);
         return;
       }
 
@@ -238,7 +332,25 @@ export class FlowEngine {
           await reply(s.rideBeingBooked);
           break;
         case 'TRACKING':
-          await this.handleStatus(ctx, reply, replyWithButtons);
+          await this.handleTracking(ctx, message, reply, replyWithButtons);
+          break;
+        case 'CONFIRMING_SOS':
+          await replyWithButtons(s.sosConfirm, [
+            [{ text: s.yesTriggerSOS, data: 'sos_trigger' }],
+            [{ text: s.noGoBack, data: 'sos_cancel' }],
+          ]);
+          break;
+        case 'CONFIRMING_MARK_SAFE':
+          await replyWithButtons(s.markSafeConfirm, [
+            [{ text: s.yesMarkSafe, data: 'mark_safe_trigger' }],
+            [{ text: s.noGoBack, data: 'mark_safe_cancel' }],
+          ]);
+          break;
+        case 'AWAITING_ADD_LOCATION':
+          await this.handleAwaitingAddLocation(ctx, input, message, reply, replyWithButtons);
+          break;
+        case 'CONFIRMING_ADD_LOCATION':
+          await this.handleConfirmingAddLocation(ctx, input, message, reply, replyWithButtons);
           break;
         default:
           await this.saveContext(message, INITIAL_CONTEXT);
@@ -263,7 +375,7 @@ export class FlowEngine {
   private async handleIdle(
     ctx: FlowContext, input: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
     connector?: Connector
   ) {
     const s = t(ctx.language);
@@ -295,7 +407,7 @@ export class FlowEngine {
         const client = new NammaYatriClient(ctx.nyToken);
         try {
           ctx.savedLocations = await client.getSavedLocations();
-          this.tokenStore.updateLocations(userKey, ctx.savedLocations);
+          this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
         } catch {}
         await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
         return;
@@ -314,7 +426,7 @@ export class FlowEngine {
     ctx: FlowContext, msg: CommandMessage,
     input: string,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
   ) {
     const s = t(ctx.language);
     const allLangs = getAllLanguages();
@@ -345,7 +457,7 @@ export class FlowEngine {
   private async handleAwaitingContact(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
     connector: Connector
   ) {
     const s = t(ctx.language);
@@ -439,7 +551,7 @@ export class FlowEngine {
   private async handleAwaitingAccessCode(
     ctx: FlowContext, input: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     const code = input.trim();
@@ -483,70 +595,85 @@ export class FlowEngine {
   private async promptForOrigin(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     ctx.state = 'AWAITING_ORIGIN';
     await this.saveContext(msg, ctx);
 
-    // WhatsApp: surface top 2 quick routes as tappable reply buttons + "More options"
-    if (msg.source === 'whatsapp' && ctx.savedLocations && ctx.savedLocations.length >= 2) {
-      const locs = ctx.savedLocations;
-      const home = locs.find((l) => l.tag.toLowerCase() === 'home');
-      const work = locs.find((l) => l.tag.toLowerCase() === 'work');
-      const [a, b2] = (home && work) ? [home, work] : [locs[0], locs[1]];
+    const locs = ctx.savedLocations || [];
+    const home = locs.find((l) => l.tag.toLowerCase() === 'home');
+    const work = locs.find((l) => l.tag.toLowerCase() === 'work');
 
-      await replyWithButtons(s.whereToGo, [
-        [{ text: `🏠 ${a.tag} → ${b2.tag}`, data: `quick:${a.tag}->${b2.tag}` }],
-        [{ text: `💼 ${b2.tag} → ${a.tag}`, data: `quick:${b2.tag}->${a.tag}` }],
-        [{ text: s.moreOptions, data: 'more_options' }],
-      ]);
-      return;
+    // Build quick reply buttons dynamically based on saved locations
+    const buttons: { text: string; data: string }[][] = [
+      [{ text: s.enterPickupAndDrop, data: 'enter_locations' }],
+    ];
+
+    if (home && work) {
+      buttons.push([{ text: `🏠 ${home.tag} → ${work.tag}`, data: `quick:${home.tag}->${work.tag}` }]);
+      buttons.push([{ text: `💼 ${work.tag} → ${home.tag}`, data: `quick:${work.tag}->${home.tag}` }]);
+    } else if (home && !work) {
+      buttons.push([{ text: s.fromHome, data: `origin:${home.tag}` }]);
+      buttons.push([{ text: s.addWork, data: 'add_location:Work' }]);
+    } else if (!home && work) {
+      buttons.push([{ text: s.fromWork, data: `origin:${work.tag}` }]);
+      buttons.push([{ text: s.addHome, data: 'add_location:Home' }]);
+    } else {
+      buttons.push([{ text: s.addHome, data: 'add_location:Home' }]);
+      buttons.push([{ text: s.addWork, data: 'add_location:Work' }]);
     }
 
-    await this.promptForOriginFull(ctx, msg, reply, replyWithButtons);
+    await replyWithButtons(s.whereToGo, buttons);
+
+    // Second message: saved location combos (only if 2+ locations exist)
+    if (locs.length >= 2) {
+      await this.promptForOriginFull(ctx, msg, reply, replyWithButtons, s.favouriteLocations);
+    }
   }
 
   private async promptForOriginFull(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    overrideText?: string
   ) {
     const s = t(ctx.language);
     if (ctx.savedLocations && ctx.savedLocations.length >= 2) {
+      const sorted = this.sortSavedLocations(ctx.savedLocations);
       const buttons: { text: string; data: string }[][] = [];
 
-      for (let i = 0; i < ctx.savedLocations.length; i++) {
-        for (let j = 0; j < ctx.savedLocations.length; j++) {
+      for (let i = 0; i < sorted.length; i++) {
+        for (let j = 0; j < sorted.length; j++) {
           if (i !== j) {
-            const from = ctx.savedLocations[i];
-            const to = ctx.savedLocations[j];
+            const from = sorted[i];
+            const to = sorted[j];
             buttons.push([{ text: `${from.tag} → ${to.tag}`, data: `quick:${from.tag}->${to.tag}` }]);
           }
         }
       }
 
-      buttons.push(...ctx.savedLocations.map((loc) => ([{
+      buttons.push(...sorted.map((loc) => ([{
         text: s.fromLabel(loc.tag),
         data: `origin:${loc.tag}`,
       }])));
 
-      await replyWithButtons(s.whereToGoWithRoutes, buttons);
+      await replyWithButtons(overrideText || s.whereToGoWithRoutes, buttons);
     } else if (ctx.savedLocations?.length) {
       const buttons = ctx.savedLocations.map((loc) => ([{
         text: s.fromLabel(loc.tag),
         data: `origin:${loc.tag}`,
       }]));
-      await replyWithButtons(s.pickSavedOrType, buttons);
+      await replyWithButtons(overrideText || s.pickSavedOrType, buttons);
     } else {
-      await reply(s.typePickupPlace);
+      await reply(overrideText || s.typePickupPlace);
     }
   }
 
   private async handleQuickRoute(
     ctx: FlowContext, fromTag: string, toTag: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     const from = ctx.savedLocations?.find((l) => l.tag === fromTag);
@@ -576,7 +703,7 @@ export class FlowEngine {
   private async handleAwaitingOrigin(
     ctx: FlowContext, input: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     // "More options" expands the full saved-locations list
@@ -585,7 +712,42 @@ export class FlowEngine {
       return;
     }
 
+    // "Enter pickup & drop" — prompt user to enter/send pickup location
+    if (input === 'enter_locations') {
+      const quickButtons = this.getHomeWorkButtons(ctx, 'origin');
+      if (quickButtons.length) {
+        await replyWithButtons(s.enterPickupPrompt, quickButtons.map((b) => [b]));
+      } else {
+        await reply(s.enterPickupPrompt);
+      }
+      return;
+    }
+
+    // "Add Home" / "Add Work" — start the add-location flow
+    const addMatch = input.match(/^add_location:(.+)$/);
+    if (addMatch) {
+      const tag = addMatch[1]; // 'Home' or 'Work'
+      ctx.addingLocationTag = tag;
+      ctx.state = 'AWAITING_ADD_LOCATION';
+      await this.saveContext(msg, ctx);
+      const prompt = tag.toLowerCase() === 'home' ? s.enterHomeAddress : s.enterWorkAddress;
+      await reply(prompt);
+      return;
+    }
+
     const client = new NammaYatriClient(ctx.nyToken!);
+
+    // Handle location pin (WhatsApp / Telegram)
+    const location = msg.metadata?.location as { latitude: number; longitude: number } | undefined;
+    if (input === '__location_pin__' && location) {
+      const client = new NammaYatriClient(ctx.nyToken!);
+      ctx.origin = await client.reverseGeocode(location.latitude, location.longitude);
+      await reply(s.locationPinReceived);
+      ctx.state = 'AWAITING_DESTINATION';
+      await this.saveContext(msg, ctx);
+      await this.promptForDestination(ctx, msg, reply, replyWithButtons);
+      return;
+    }
 
     // Handle button callback (origin:TagName)
     const tagMatch = input.match(/^origin:(.+)$/);
@@ -614,7 +776,7 @@ export class FlowEngine {
       return;
     }
 
-    // Search places
+    // Search places via autocomplete
     const places = await client.searchPlaces(searchTerm);
     if (!places.length) {
       await reply(s.noPlacesFound);
@@ -625,17 +787,17 @@ export class FlowEngine {
     ctx.state = 'CONFIRMING_ORIGIN';
     await this.saveContext(msg, ctx);
 
-    const buttons = places.slice(0, 5).map((p, i) => ([{
-      text: p.description.substring(0, 60),
-      data: `pick_origin:${i}`,
-    }]));
+    const buttons = places.slice(0, 4).map((p, i) => {
+      const { title, description } = this.splitPlaceDescription(p.description);
+      return [{ text: title, data: `pick_origin:${i}`, description }];
+    });
     await replyWithButtons(s.selectPickup, buttons);
   }
 
   private async handleConfirmingOrigin(
     ctx: FlowContext, input: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     // Handle button callback
@@ -662,7 +824,7 @@ export class FlowEngine {
   private async promptForDestination(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     // Filter out the origin from saved locations
@@ -671,23 +833,41 @@ export class FlowEngine {
     );
 
     if (destinations?.length) {
-      const buttons = destinations.map((loc) => ([{
+      // Sort: Home first, Work second, then others
+      const sorted = this.sortSavedLocations(destinations);
+      const buttons = sorted.map((loc) => ([{
         text: `📍 ${loc.tag}`,
         data: `dest:${loc.tag}`,
       }]));
-      await replyWithButtons(s.whereToWithSaved, buttons);
+      await replyWithButtons(s.enterDropPrompt, buttons);
     } else {
-      await reply(s.whereTo);
+      // No saved destinations — show Home/Work quick replies if available
+      const quickButtons = this.getHomeWorkButtons(ctx, 'dest');
+      if (quickButtons.length) {
+        await replyWithButtons(s.enterDropPrompt, quickButtons.map((b) => [b]));
+      } else {
+        await reply(s.enterDropPrompt);
+      }
     }
   }
 
   private async handleAwaitingDestination(
     ctx: FlowContext, input: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     const client = new NammaYatriClient(ctx.nyToken!);
+
+    // Handle location pin (WhatsApp / Telegram)
+    const location = msg.metadata?.location as { latitude: number; longitude: number } | undefined;
+    if (input === '__location_pin__' && location) {
+      const reverseClient = new NammaYatriClient(ctx.nyToken!);
+      ctx.destination = await reverseClient.reverseGeocode(location.latitude, location.longitude);
+      await reply(s.locationPinReceived);
+      await this.searchAndShowEstimates(ctx, msg, reply, replyWithButtons);
+      return;
+    }
 
     // Handle button callback (dest:TagName)
     const tagMatch = input.match(/^dest:(.+)$/);
@@ -712,6 +892,7 @@ export class FlowEngine {
       return;
     }
 
+    // Search places via autocomplete
     const places = await client.searchPlaces(searchTerm);
     if (!places.length) {
       await reply(s.noPlacesFound);
@@ -722,17 +903,17 @@ export class FlowEngine {
     ctx.state = 'CONFIRMING_DESTINATION';
     await this.saveContext(msg, ctx);
 
-    const buttons = places.slice(0, 5).map((p, i) => ([{
-      text: p.description.substring(0, 60),
-      data: `pick_dest:${i}`,
-    }]));
+    const buttons = places.slice(0, 4).map((p, i) => {
+      const { title, description } = this.splitPlaceDescription(p.description);
+      return [{ text: title, data: `pick_dest:${i}`, description }];
+    });
     await replyWithButtons(s.selectDrop, buttons);
   }
 
   private async handleConfirmingDestination(
     ctx: FlowContext, input: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     const btnMatch = input.match(/^pick_dest:(\d+)$/);
@@ -752,10 +933,92 @@ export class FlowEngine {
     await this.searchAndShowEstimates(ctx, msg, reply, replyWithButtons);
   }
 
+  private async handleAwaitingAddLocation(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    const tag = ctx.addingLocationTag || 'Home';
+    const client = new NammaYatriClient(ctx.nyToken!);
+
+    // Handle location pin
+    const location = msg.metadata?.location as { latitude: number; longitude: number } | undefined;
+    if (input === '__location_pin__' && location) {
+      const details = await client.reverseGeocode(location.latitude, location.longitude);
+      try {
+        await client.saveLocation(tag, details);
+        ctx.savedLocations = await client.getSavedLocations().catch(() => ctx.savedLocations);
+        const userKey = `${msg.source}:${msg.senderId}`;
+        this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+      } catch { /* fall through */ }
+      ctx.addingLocationTag = undefined;
+      ctx.addLocationOptions = undefined;
+      await reply(s.locationSaved(tag));
+      await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+      return;
+    }
+
+    // Autocomplete search
+    const places = await client.searchPlaces(input);
+    if (!places.length) {
+      await reply(s.noPlacesFound);
+      return;
+    }
+
+    ctx.addLocationOptions = places.map((p) => ({ description: p.description, placeId: p.placeId }));
+    ctx.state = 'CONFIRMING_ADD_LOCATION';
+    await this.saveContext(msg, ctx);
+
+    const buttons = places.slice(0, 4).map((p, i) => {
+      const { title, description } = this.splitPlaceDescription(p.description);
+      return [{ text: title, data: `pick_add_loc:${i}`, description }];
+    });
+    await replyWithButtons(s.selectLocationFor(tag), buttons);
+  }
+
+  private async handleConfirmingAddLocation(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    const tag = ctx.addingLocationTag || 'Home';
+
+    const btnMatch = input.match(/^pick_add_loc:(\d+)$/);
+    const idx = btnMatch ? parseInt(btnMatch[1]) : parseInt(input) - 1;
+
+    if (isNaN(idx) || idx < 0 || idx >= (ctx.addLocationOptions?.length || 0)) {
+      await reply(s.invalidChoice(ctx.addLocationOptions?.length || 0));
+      return;
+    }
+
+    const selected = ctx.addLocationOptions![idx];
+    const client = new NammaYatriClient(ctx.nyToken!);
+    const details = await client.getPlaceDetails(selected.placeId);
+
+    try {
+      await client.saveLocation(tag, details);
+      // Refresh saved locations from API
+      ctx.savedLocations = await client.getSavedLocations().catch(() => ctx.savedLocations);
+      const userKey = `${msg.source}:${msg.senderId}`;
+      this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+      await reply(s.locationSaved(tag));
+    } catch (err: any) {
+      console.error(`[flow] saveLocation failed: ${err.message}`);
+      await reply(s.locationSaveFailed);
+    }
+
+    ctx.addingLocationTag = undefined;
+    ctx.addLocationOptions = undefined;
+    // Re-prompt booking with updated saved locations
+    await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+  }
+
   private async searchAndShowEstimates(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     await reply(s.searchingRides);
@@ -763,9 +1026,7 @@ export class FlowEngine {
     const client = new NammaYatriClient(ctx.nyToken!);
 
     // Kick off history fetch concurrently — it runs while we wait for estimates
-    const historyPromise: Promise<NYRideHistoryItem[]> = msg.source === 'whatsapp'
-      ? client.getRideHistory(20).catch(() => [])
-      : Promise.resolve([]);
+    const historyPromise: Promise<NYRideHistoryItem[]> = client.getRideHistory(20).catch(() => []);
 
     const searchId = await client.searchRide(ctx.origin!, ctx.destination!);
     ctx.searchId = searchId;
@@ -778,6 +1039,22 @@ export class FlowEngine {
     }
 
     if (!estimates.length) {
+      // Check if user already has an active ride — that's likely why search returned nothing
+      try {
+        const activeBookings = await client.getActiveBookings().catch(() => []);
+        if (activeBookings.length > 0) {
+          const booking = activeBookings[0];
+          ctx.activeBookingId = booking.id;
+          ctx.state = 'TRACKING';
+          await this.saveContext(msg, ctx);
+          const ride = booking.rideList?.[0];
+          const tierName = booking.serviceTierName || ride?.vehicleVariant || '';
+          await reply(s.activeRideExists);
+          await this.sendBookingConfirmation(booking, tierName, msg, reply, replyWithButtons);
+          return;
+        }
+      } catch { /* fall through to no rides message */ }
+
       ctx.state = 'IDLE';
       await this.saveContext(msg, ctx);
       await reply(s.noRidesAvailable);
@@ -800,26 +1077,24 @@ export class FlowEngine {
       }];
     });
 
-    // WhatsApp only: try to surface top 2 most-used vehicle types as quick reply buttons
-    if (msg.source === 'whatsapp') {
-      try {
-        const history = await historyPromise;
-        console.log(`[history] fetched ${history.length} rides for ${msg.senderId}`);
-        if (history.length > 0) {
-          const sample = history.slice(0, 3).map((r) => `status=${r.status} variant=${r.vehicleVariant}`);
-          console.log(`[history] sample: ${sample.join(', ')}`);
-        }
-        const quickPicks = this.buildQuickPicksFromHistory(history, estimates);
-        console.log(`[history] quick picks: ${quickPicks.map((p) => p.text).join(', ') || 'none'}`);
-        if (quickPicks.length > 0) {
-          await replyWithButtons(
-            s.basedOnPastRides,
-            quickPicks.map((b) => [b])
-          );
-        }
-      } catch (err: any) {
-        console.warn(`[history] failed: ${err.message}`);
+    // Surface top 2-3 most-used vehicle types from past rides as quick pick buttons
+    try {
+      const history = await historyPromise;
+      console.log(`[history] fetched ${history.length} rides for ${msg.senderId}`);
+      if (history.length > 0) {
+        const sample = history.slice(0, 3).map((r) => `status=${r.status} variant=${r.vehicleVariant}`);
+        console.log(`[history] sample: ${sample.join(', ')}`);
       }
+      const quickPicks = this.buildQuickPicksFromHistory(history, estimates);
+      console.log(`[history] quick picks: ${quickPicks.map((p) => p.text).join(', ') || 'none'}`);
+      if (quickPicks.length > 0) {
+        await replyWithButtons(
+          s.basedOnPastRides,
+          quickPicks.map((b) => [b])
+        );
+      }
+    } catch (err: any) {
+      console.warn(`[history] failed: ${err.message}`);
     }
 
     await replyWithButtons(s.availableRidesForRoute, allRideButtons);
@@ -862,7 +1137,7 @@ export class FlowEngine {
   private async handleShowingEstimates(
     ctx: FlowContext, input: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
     connector: Connector
   ) {
     const s = t(ctx.language);
@@ -954,7 +1229,7 @@ export class FlowEngine {
     tierName: string,
     msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const ctx = await this.getContext(msg);
     const s = t(ctx.language);
@@ -999,7 +1274,7 @@ export class FlowEngine {
   private async handleRetrySame(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
     connector: Connector
   ) {
     const s = t(ctx.language);
@@ -1052,10 +1327,62 @@ export class FlowEngine {
     await this.handleShowingEstimates(ctx, matchInput, msg, reply, replyWithButtons, connector);
   }
 
+  /** Called when user sends any unrecognized message during TRACKING state — shows ride status + SOS/112 */
+  private async handleTracking(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    const client = new NammaYatriClient(ctx.nyToken!);
+
+    const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+    const createdAfter = ctx.selectStartedAt
+      ? new Date(ctx.selectStartedAt)
+      : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
+
+    const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
+    if (!bookings.length) {
+      await this.resetContext(msg);
+      await replyWithButtons(
+        s.noActiveRidesBook,
+        [[{ text: s.bookARide, data: 'book' }]]
+      );
+      return;
+    }
+
+    const b = bookings[0];
+    const ride = b.rideList?.[0];
+    const rideStatus = ride?.status?.toUpperCase();
+    const driverName = b.driverName || ride?.driverName;
+    const vehicleNumber = b.vehicleNumber || ride?.vehicleNumber;
+    const trackingLink = `https://nammayatri.in/track/${b.id}`;
+
+    // Determine ride status text
+    const statusText = rideStatus === 'INPROGRESS' ? s.rideInProgressStatus : s.rideNotStarted;
+
+    const lines = [statusText];
+    if (driverName) lines.push(s.driverLabel(driverName));
+    if (vehicleNumber) lines.push(s.vehicleLabel(vehicleNumber));
+    lines.push(`\n${s.track}\n${trackingLink}`);
+
+    const buttons: { text: string; data: string }[][] = [];
+    if (ctx.sosId) {
+      buttons.push([{ text: s.markSafeButton, data: 'mark_safe_confirm' }]);
+    } else {
+      buttons.push([{ text: s.sosButton, data: 'sos_confirm' }]);
+    }
+    buttons.push([{ text: s.call112Button, data: 'call_112' }]);
+    buttons.push([{ text: s.cancelRide, data: `cancel_confirm:${b.id}` }]);
+
+    await replyWithButtons(lines.join('\n'), buttons);
+  }
+
   private async handleStatus(
     ctx: FlowContext,
+    msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons?: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons?: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     const client = new NammaYatriClient(ctx.nyToken!);
@@ -1071,6 +1398,7 @@ export class FlowEngine {
     );
 
     if (!bookings.length) {
+      await this.resetContext(msg);
       if (replyWithButtons) {
         await replyWithButtons(
           s.noActiveRidesBook,
@@ -1111,7 +1439,7 @@ export class FlowEngine {
     ctx: FlowContext, msg: CommandMessage,
     input: string,
     reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
     const client = ctx.nyToken ? new NammaYatriClient(ctx.nyToken) : null;
@@ -1192,7 +1520,7 @@ export class FlowEngine {
   private async replyWithMenu(
     prefix: string,
     msg: CommandMessage,
-    replyWithButtons: (txt: string, b: { text: string; data: string }[][]) => Promise<void>
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const ctx = await this.getContext(msg);
     const s = t(ctx.language);
@@ -1215,6 +1543,40 @@ export class FlowEngine {
   }
 
   // --- Helpers ---
+
+  /** Return Home/Work quick reply buttons from saved locations, for use as origin or dest shortcuts */
+  private getHomeWorkButtons(ctx: FlowContext, prefix: 'origin' | 'dest'): { text: string; data: string }[] {
+    if (!ctx.savedLocations?.length) return [];
+    const buttons: { text: string; data: string }[] = [];
+    const home = ctx.savedLocations.find((l) => l.tag.toLowerCase() === 'home');
+    const work = ctx.savedLocations.find((l) => l.tag.toLowerCase() === 'work');
+    if (home) buttons.push({ text: `🏠 ${home.tag}`, data: `${prefix}:${home.tag}` });
+    if (work) buttons.push({ text: `💼 ${work.tag}`, data: `${prefix}:${work.tag}` });
+    return buttons;
+  }
+
+  /** Sort saved locations: Home first, Work second, then alphabetical */
+  private sortSavedLocations(locs: { tag: string; [k: string]: any }[]): typeof locs {
+    return [...locs].sort((a, b) => {
+      const aTag = a.tag.toLowerCase();
+      const bTag = b.tag.toLowerCase();
+      if (aTag === 'home') return -1;
+      if (bTag === 'home') return 1;
+      if (aTag === 'work') return -1;
+      if (bTag === 'work') return 1;
+      return aTag.localeCompare(bTag);
+    });
+  }
+
+  /** Split "Koramangala 4th Block, Bengaluru, Karnataka, India" → { title, description } */
+  private splitPlaceDescription(full: string): { title: string; description: string } {
+    const commaIdx = full.indexOf(',');
+    if (commaIdx === -1) return { title: full.substring(0, 24), description: '' };
+    return {
+      title: full.substring(0, commaIdx).substring(0, 24),
+      description: full.substring(commaIdx + 1).trim().substring(0, 72),
+    };
+  }
 
   private getReplyTarget(msg: CommandMessage, connector: Connector): string {
     if (connector.source === 'whatsapp') {

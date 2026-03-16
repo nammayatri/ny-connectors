@@ -33,6 +33,20 @@ export interface LanguageStrings {
   // Origin & destination
   whereToGo: string;
   whereToGoWithRoutes: string;
+  enterPickupAndDrop: string;
+  enterPickupPrompt: string;
+  enterDropPrompt: string;
+  locationPinReceived: string;
+  favouriteLocations: string;
+  addHome: string;
+  addWork: string;
+  enterHomeAddress: string;
+  enterWorkAddress: string;
+  selectLocationFor: (tag: string) => string;
+  locationSaved: (tag: string) => string;
+  locationSaveFailed: string;
+  fromHome: string;
+  fromWork: string;
   moreOptions: string;
   pickSavedOrType: string;
   typePickupPlace: string;
@@ -52,6 +66,7 @@ export interface LanguageStrings {
   searchingRides: string;
   noRidesAvailable: string;
   noRidesAvailableRetry: string;
+  activeRideExists: string;
   basedOnPastRides: string;
   availableRides: string;
   availableRidesForRoute: string;
@@ -101,6 +116,22 @@ export interface LanguageStrings {
   cancelFailed: (err: string) => string;
   cancelled: string;
   whatToDo: string;
+
+  // SOS & safety
+  rideNotStarted: string;
+  rideInProgressStatus: string;
+  sosButton: string;
+  call112Button: string;
+  sosConfirm: string;
+  yesTriggerSOS: string;
+  noGoBack: string;
+  sosTriggered: string;
+  sosFailed: (err: string) => string;
+  markSafeButton: string;
+  markSafeConfirm: string;
+  yesMarkSafe: string;
+  markedSafe: string;
+  markSafeFailed: (err: string) => string;
 
   // Errors
   somethingWentWrong: string;

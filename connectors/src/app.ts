@@ -86,6 +86,14 @@ app.post('/webhook/slack', (req: Request, res: Response) => {
   handleIncoming(slack, req, res);
 });
 
+// Slack interactive payloads (button clicks) — sent as form-encoded with a payload field
+app.post('/webhook/slack/interactions', express.urlencoded({
+  extended: true,
+  verify: (req: any, _res: any, buf: Buffer) => { req.rawBody = buf.toString(); },
+}), (req: Request, res: Response) => {
+  handleIncoming(slack, req, res);
+});
+
 const shutdown = async () => {
   await sessionManager.disconnect();
 };

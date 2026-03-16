@@ -85,6 +85,38 @@ export class TelegramConnector implements Connector {
       };
     }
 
+    // Handle shared location
+    if (body?.message?.location) {
+      const message = body.message;
+      const chat = message.chat;
+
+      let chatType: ChatType = 'direct';
+      if (chat.type === 'group' || chat.type === 'supergroup') chatType = 'group';
+      else if (chat.type === 'channel') chatType = 'channel';
+
+      return {
+        source: 'telegram',
+        messageId: String(message.message_id),
+        senderId: String(message.from?.id ?? ''),
+        senderName: [message.from?.first_name, message.from?.last_name]
+          .filter(Boolean).join(' ') || message.from?.username || 'unknown',
+        chatId: String(chat.id),
+        chatType,
+        text: '__location_pin__',
+        timestamp: new Date(message.date * 1000).toISOString(),
+        sessionId: '',
+        metadata: {
+          location: {
+            latitude: message.location.latitude,
+            longitude: message.location.longitude,
+          },
+          username: message.from?.username,
+          isBot: message.from?.is_bot,
+        },
+        raw: body,
+      };
+    }
+
     if (!body?.message?.text) return null;
 
     const message = body.message;
