@@ -1,4 +1,5 @@
 import { NYPlaceDetails, NYEstimate, NYSavedLocation } from '../ny';
+import { SupportedLanguage } from '../i18n';
 
 export type FlowState =
   | 'IDLE'
@@ -13,7 +14,8 @@ export type FlowState =
   | 'SHOWING_ESTIMATES'
   | 'BOOKING'
   | 'TRACKING'
-  | 'CONFIRMING_CANCEL';
+  | 'CONFIRMING_CANCEL'
+  | 'CHOOSING_LANGUAGE';
 
 export interface FlowContext {
   state: FlowState;
@@ -33,6 +35,7 @@ export interface FlowContext {
   activeBookingId?: string;
   selectStartedAt?: string;   // ISO timestamp just before selectEstimate — used to filter listV2 results
   cancelRequested?: boolean;
+  language?: SupportedLanguage;
 }
 
 export const INITIAL_CONTEXT: FlowContext = {

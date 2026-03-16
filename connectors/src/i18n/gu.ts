@@ -1,0 +1,110 @@
+import { LanguageStrings } from './types';
+
+export const gu: LanguageStrings = {
+  languageName: 'Gujarati',
+  nativeLanguageName: 'ગુજરાતી',
+
+  // Welcome & menu
+  welcomeMessage: "👋 સ્વાગત છે! હું તમારો નમ્મા યાત્રી રાઈડ સહાયક છું.\n\nતમે શું કરવા માગો છો?",
+  welcomeBack: '👋 ફરી સ્વાગત છે! તમે શું કરવા માગો છો?',
+  bookARide: '🚕 રાઈડ બુક કરો',
+  trackRide: '📍 રાઈડ ટ્રેક કરો',
+  chooseLanguage: '🌐 ભાષા',
+  selectLanguage: '🌐 તમારી પસંદગીની ભાષા પસંદ કરો:',
+  languageUpdated: (lang: string) => `✅ ભાષા *${lang}* માં બદલાઈ ગઈ.`,
+  moreLanguages: '➕ વધુ ભાષાઓ',
+
+  // Auth flow
+  needSignIn: '🔐 રાઈડ ટ્રેક કરવા માટે તમારે સાઇન ઇન કરવું પડશે.\n\nશું તમે રાઈડ બુક કરવા માગો છો?',
+  enterPhone: 'પહેલી વાર? તમારો 10 અંકનો મોબાઈલ નંબર દાખલ કરો:',
+  invalidPhone: 'અમાન્ય ફોન નંબર. માન્ય 10 અંકનો નંબર દાખલ કરો:',
+  enterAccessCode: 'તમારો એક્સેસ કોડ દાખલ કરો (Namma Yatri એપ > પ્રોફાઈલ > અમારા વિશે):',
+  authSuccess: "તમે તૈયાર છો! તમારે આ ફરીથી કરવાની જરૂર નથી.",
+  authSuccessFirstTime: "તમે તૈયાર છો! ચાલો રાઈડ બુક કરીએ.",
+  setupFailed: (err: string) => `સેટઅપ નિષ્ફળ: ${err}\nફરીથી પ્રયાસ કરવા "book" મોકલો.`,
+  authFailed: (err: string) => `પ્રમાણીકરણ નિષ્ફળ: ${err}\nફરીથી પ્રયાસ કરવા તમારો ફોન નંબર દાખલ કરો:`,
+  sharePhone: 'કૃપા કરીને તમારો ફોન નંબર શેર કરવા નીચેનું બટન દબાવો.',
+  shareOwnPhone: "કૃપા કરીને તમારો પોતાનો ફોન નંબર શેર કરો, બીજાનો નહીં.",
+  sharePhonePrompt: 'તમારો નંબર શેર કરવા બટન દબાવો:',
+  couldNotReadPhone: 'તમારો ફોન નંબર વાંચી શકાયો નહીં. કૃપા કરીને ફરીથી પ્રયાસ કરો.',
+  allSet: "તમે તૈયાર છો! ચાલો રાઈડ બુક કરીએ.",
+
+  // Origin & destination
+  whereToGo: 'તમે ક્યાં જવા માગો છો?',
+  whereToGoWithRoutes: 'તમે ક્યાં જવા માગો છો?\n\nઝડપી રૂટ અથવા સ્થાન પસંદ કરો.\nતમે સ્થાનનું નામ પણ ટાઈપ કરી શકો છો:',
+  moreOptions: '➕ વધુ વિકલ્પો',
+  pickSavedOrType: 'સાચવેલું સ્થાન પસંદ કરો અથવા સ્થાનનું નામ ટાઈપ કરો:',
+  typePickupPlace: 'તમે ક્યાંથી પિકઅપ કરવા માગો છો?\nશોધવા માટે સ્થાનનું નામ ટાઈપ કરો:',
+  selectPickup: 'પિકઅપ સ્થાન પસંદ કરો:',
+  pickup: (place: string) => `પિકઅપ: ${place}`,
+  whereTo: 'ક્યાં જવું છે?\nશોધવા માટે સ્થાનનું નામ ટાઈપ કરો:',
+  whereToWithSaved: 'ક્યાં જવું છે?\n\nસ્થાન પસંદ કરો અથવા સ્થાનનું નામ ટાઈપ કરો:',
+  typeDropPlace: 'ક્યાં ઉતરવું છે?\nશોધવા માટે સ્થાનનું નામ ટાઈપ કરો:',
+  selectDrop: 'ડ્રોપ સ્થાન પસંદ કરો:',
+  drop: (place: string) => `ડ્રોપ: ${place}`,
+  noPlacesFound: 'કોઈ સ્થાન મળ્યું નથી. અલગ શોધ અજમાવો:',
+  invalidChoice: (max: number) => `અમાન્ય પસંદગી. 1-${max} માંથી પસંદ કરો:`,
+  couldNotFindLocations: 'તે સ્થાનો શોધી શકાયા નહીં. ફરીથી પ્રયાસ કરવા "book" મોકલો.',
+  fromLabel: (tag: string) => `📍 થી: ${tag}`,
+
+  // Ride search & estimates
+  searchingRides: 'રાઈડ શોધી રહ્યા છીએ...',
+  noRidesAvailable: 'હાલમાં કોઈ રાઈડ ઉપલબ્ધ નથી. ફરીથી પ્રયાસ કરવા "book" મોકલો.',
+  noRidesAvailableRetry: '😔 હાલમાં કોઈ રાઈડ ઉપલબ્ધ નથી. તમે શું કરવા માગો છો?',
+  basedOnPastRides: '🕐 તમારી પાછલી રાઈડ્સ પર આધારિત:',
+  availableRides: 'ઉપલબ્ધ રાઈડ્સ:',
+  availableRidesForRoute: 'તમારા રૂટ માટે ઉપલબ્ધ રાઈડ્સ અહીં છે:',
+
+  // Booking
+  booking: (tier: string, fare: number) => `${tier} (₹${fare}) બુક કરી રહ્યા છીએ...`,
+  stillSearching: (elapsed: number) => `⏳ હજુ પણ નજીકમાં ડ્રાઈવર શોધી રહ્યા છીએ... (${elapsed}s)\n\nરોકવા માટે "cancel" મોકલો.`,
+  rideConfirmed: '🎉 રાઈડ કન્ફર્મ થઈ!\n',
+  rideBooked: '✅ રાઈડ બુક થઈ!',
+  waitingForDriver: 'ડ્રાઈવર સોંપણીની રાહ જોઈ રહ્યા છીએ...',
+  trackYourRide: '📲 તમારી રાઈડ ટ્રેક કરો:',
+  track: '📲 ટ્રેક:',
+  callDriver: '📞 કૉલ કરો',
+  cancelRide: '❌ રદ કરો',
+  driverLabel: (name: string) => `👤 ડ્રાઈવર: *${name}*`,
+  vehicleLabel: (number: string) => `🔢 વાહન: *${number}*`,
+  phoneLabel: (phone: string) => `📞 ફોન: *${phone}*`,
+  otpLabel: (otp: string) => `🔑 OTP: *${otp}*`,
+  driverPhone: (phone: string) => `📞 ડ્રાઈવરનો નંબર: *${phone}*\n\nતમે તેમને સીધો કૉલ કરી શકો છો.`,
+  driverDetailsNotAvailable: 'ડ્રાઈવરની વિગતો હજુ ઉપલબ્ધ નથી. કૃપા કરીને થોડીવાર પછી ફરીથી પ્રયાસ કરો.',
+  noActiveRide: 'કોઈ સક્રિય રાઈડ મળી નથી.',
+
+  // No driver found
+  noDriverFound: (tier: string) => `😔 3 મિનિટ પછી *${tier}* માટે કોઈ ડ્રાઈવર મળ્યો નહીં.\n\nતમે શું કરવા માગો છો?`,
+  retrySameVehicle: '🔄 એ જ વાહન ફરીથી અજમાવો',
+  tryDifferentVehicle: '🚗 અલગ વાહન અજમાવો',
+  mainMenu: '🏠 મુખ્ય મેનૂ',
+  retrying: (tier: string) => `🔄 ${tier} ફરીથી પ્રયાસ કરી રહ્યા છીએ...`,
+  tierNotAvailable: (tier: string) => `${tier} હાલમાં ઉપલબ્ધ નથી. અહીં ઉપલબ્ધ વિકલ્પો છે:`,
+  tryAgain: '🔄 ફરીથી પ્રયાસ કરો',
+
+  // Status
+  activeRide: '📍 સક્રિય રાઈડ\n',
+  noActiveRides: 'કોઈ સક્રિય રાઈડ મળી નથી. નવી શરૂ કરવા "book" મોકલો.',
+  noActiveRidesBook: '🔍 કોઈ સક્રિય રાઈડ મળી નથી.\n\nશું તમે એક બુક કરવા માગો છો?',
+
+  // Cancel
+  cancelConfirm: '⚠️ શું તમે ખરેખર તમારી રાઈડ રદ કરવા માગો છો?',
+  cancelConfirmWithDriver: (driver: string, vehicle?: string) =>
+    `⚠️ *${driver}*${vehicle ? ` (${vehicle})` : ''} સાથેની રાઈડ રદ કરવી છે?`,
+  yesCancelIt: '✅ હા, રદ કરો',
+  noKeepIt: '🔙 ના, રાખો',
+  rideSearchCancelled: 'રાઈડ શોધ રદ થઈ.',
+  rideCancelled: 'રાઈડ રદ થઈ. ✅',
+  rideCompleted: 'આ રાઈડ પહેલેથી પૂર્ણ થઈ ગઈ છે અને રદ કરી શકાતી નથી.',
+  rideAlreadyCancelled: 'આ રાઈડ પહેલેથી રદ થઈ ગઈ છે.',
+  rideInProgress: '⚠️ તમારી રાઈડ પહેલેથી ચાલુ છે અને રદ કરી શકાતી નથી.',
+  cancelFailed: (err: string) => `રદ કરી શકાયું નહીં: ${err}`,
+  cancelled: 'રદ થયું.',
+  whatToDo: '\n\nતમે શું કરવા માગો છો?',
+
+  // Errors
+  somethingWentWrong: 'કંઈક ખોટું થયું. ફરીથી શરૂ કરવા "book" મોકલો.',
+  sessionExpired: 'સત્ર સમાપ્ત થયું. ફરીથી પ્રમાણિત થવા "book" મોકલો.',
+  error: (msg: string) => `ભૂલ: ${msg}\nફરીથી શરૂ કરવા "cancel" મોકલો.`,
+  rideBeingBooked: 'તમારી રાઈડ બુક થઈ રહી છે. કૃપા કરીને રાહ જુઓ અથવા રદ કરવા "cancel" મોકલો.',
+};

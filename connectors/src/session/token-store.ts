@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { SupportedLanguage } from '../i18n';
 
 interface UserAuth {
   nyToken: string;
@@ -7,6 +8,7 @@ interface UserAuth {
   phone: string;
   savedLocations?: any[];
   authenticatedAt: string;
+  language?: SupportedLanguage;
 }
 
 const TOKEN_FILE = path.join(process.env.TOKEN_STORE_PATH || '.', 'user-tokens.json');
@@ -32,6 +34,17 @@ export class TokenStore {
       this.tokens[userId].savedLocations = locations;
       this.save();
     }
+  }
+
+  updateLanguage(userId: string, language: SupportedLanguage): void {
+    if (this.tokens[userId]) {
+      this.tokens[userId].language = language;
+      this.save();
+    }
+  }
+
+  getLanguage(userId: string): SupportedLanguage | undefined {
+    return this.tokens[userId]?.language;
   }
 
   delete(userId: string): void {
