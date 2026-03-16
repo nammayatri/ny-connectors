@@ -1,0 +1,51 @@
+{
+  "name": "ny-cli-tui",
+  "version": "1.0.0",
+  "description": "Namma Yatri CLI TUI built with Ink",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ny-tui": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch"
+  },
+  "keywords": [
+    "namma-yatri",
+    "cli",
+    "tui",
+    "ink",
+    "react"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ink": "^4.4.1",
+    "ink-select-input": "^5.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^5.0.0",
+    "ink-use-stdout-dimensions": "^1.0.5",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^14.2.1",
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.3.7",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^30.3.0",
+    "react-dom": "^18.3.1",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
