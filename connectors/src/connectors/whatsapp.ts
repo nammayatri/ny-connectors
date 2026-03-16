@@ -79,7 +79,7 @@ export class WhatsAppConnector implements Connector {
     });
   }
 
-  async sendWithButtons(chatId: string, text: string, buttons: { text: string; data: string }[]): Promise<void> {
+  async sendWithButtons(chatId: string, text: string, buttons: { text: string; data: string; description?: string }[]): Promise<void> {
     if (buttons.length <= 3) {
       // Reply buttons (max 3)
       await this.sendWhatsApp(chatId, {
@@ -102,6 +102,9 @@ export class WhatsAppConnector implements Connector {
       });
     } else {
       // List message (max 10 rows)
+      const isEstimates = buttons.some((b) => b.data.startsWith('estimate:'));
+      const listLabel = isEstimates ? 'View Rides' : 'View options';
+      const sectionTitle = isEstimates ? 'View Rides' : 'Options';
       await this.sendWhatsApp(chatId, {
         messaging_product: 'whatsapp',
         to: chatId,
@@ -110,13 +113,17 @@ export class WhatsAppConnector implements Connector {
           type: 'list',
           body: { text },
           action: {
-            button: 'View options',
+            button: listLabel,
             sections: [{
-              title: 'Options',
-              rows: buttons.slice(0, 10).map((b) => ({
-                id: b.data.substring(0, 200),
-                title: b.text.substring(0, 24),
-              })),
+              title: sectionTitle,
+              rows: buttons.slice(0, 10).map((b) => {
+                const row: Record<string, string> = {
+                  id: b.data.substring(0, 200),
+                  title: b.text.substring(0, 24),
+                };
+                if (b.description) row.description = b.description.substring(0, 72);
+                return row;
+              }),
             }],
           },
         },

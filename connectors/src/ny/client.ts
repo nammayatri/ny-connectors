@@ -29,6 +29,17 @@ export interface NYEstimate {
   estimatedPickupDuration?: number;
 }
 
+export interface NYRideHistoryItem {
+  id: string;
+  status: string;
+  createdAt: string;
+  vehicleVariant?: string;  // mapped from vehicleServiceTierType in listv2
+  serviceTierName?: string; // e.g. "Auto", "Auto Priority"
+  estimatedFare?: number;
+  fromLocation?: { area?: string; city?: string };
+  toLocation?: { area?: string; city?: string };
+}
+
 export interface NYSavedLocation {
   tag: string;
   lat: number;
@@ -48,7 +59,7 @@ export class NammaYatriClient {
     this.token = token;
   }
 
-  static async authenticate(mobileNumber: string, accessCode: string): Promise<{ token: string; person: any }> {
+  static async authenticate(mobileNumber: string, accessCode: string): Promise<{ token: string; personId: string; person: any }> {
     const res = await fetch(`${config.nyAuthUrl}/auth/get-token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -64,7 +75,24 @@ export class NammaYatriClient {
     }
 
     const data = await res.json() as any;
-    return { token: data.token, person: data.person };
+    console.log(`[auth] full response: ${JSON.stringify(data).substring(0, 600)}`);
+    const personId = data.person?.id || data.personId || data.customerId || data.userId || data.id || '';
+    console.log(`[auth] personId=${personId} token=${data.token?.substring(0, 10)}...`);
+    return { token: data.token, personId, person: data.person };
+  }
+
+  async getPersonId(): Promise<string> {
+    const url = `${config.nyBaseUrl}/profile`;
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', token: this.token },
+    });
+    if (!res.ok) {
+      console.warn(`[auth] profile fetch failed: ${res.status}`);
+      return '';
+    }
+    const data = await res.json() as any;
+    console.log(`[auth] profile response: ${JSON.stringify(data).substring(0, 400)}`);
+    return data.id || data.personId || data.customerId || data.userId || '';
   }
 
   async getSavedLocations(): Promise<NYSavedLocation[]> {
@@ -190,21 +218,150 @@ export class NammaYatriClient {
     if (!res.ok) throw new Error(`Select estimate failed: ${res.status}`);
   }
 
+  /**
+   * Polls /rideBooking/select/{personId}/{estimateId}/result until bookingId is returned.
+   * Returns the bookingId string, or null if not yet assigned.
+   */
+  async pollSelectResult(personId: string, estimateId: string): Promise<{ bookingId: string | null; raw: any }> {
+    const url = `${config.nyBaseUrl}/rideBooking/select/${personId}/${estimateId}/result`;
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', token: this.token },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn(`[booking] pollSelectResult ${res.status}: ${body.substring(0, 200)}`);
+      return { bookingId: null, raw: null };
+    }
+    const data = await res.json() as any;
+    console.log(`[booking] selectResult: ${JSON.stringify(data).substring(0, 400)}`);
+    const bookingId = data.bookingId || data.id || null;
+    return { bookingId, raw: data };
+  }
+
+  /**
+   * Fetches full booking details including driver info, OTP etc.
+   * Tries /rideBooking/{bookingId} first, then falls back to listv2.
+   */
+  async getBookingDetails(bookingId: string): Promise<any> {
+    const url = `${config.nyBaseUrl}/rideBooking/${bookingId}`;
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', token: this.token },
+    });
+    if (!res.ok) {
+      console.warn(`[booking] getBookingDetails failed: ${res.status}, falling back to listv2`);
+      const actives = await this.getActiveBookings().catch(() => []);
+      return actives.find((b: any) => b.id === bookingId) || actives[0] || null;
+    }
+    const data = await res.json() as any;
+    console.log(`[booking] bookingDetails: ${JSON.stringify(data).substring(0, 600)}`);
+    return data.contents ?? data;
+  }
+
   async cancelSearch(estimateId: string): Promise<void> {
     const res = await fetch(`${config.nyBaseUrl}/estimate/${estimateId}/cancelSearch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({}),
     });
-    if (!res.ok) throw new Error(`Cancel failed: ${res.status}`);
+    if (!res.ok) throw new Error(`Cancel search failed: ${res.status}`);
   }
 
-  async getActiveBookings(): Promise<any[]> {
-    const res = await fetch(`${config.nyBaseUrl}/rideBooking/list?onlyActive=true&clientId=ACP_SERVER`, {
+  async cancelRide(bookingId: string, bookingStatus?: string): Promise<void> {
+    // reasonStage: OnSearch → not yet assigned, OnAssign → driver assigned
+    const reasonStage = (bookingStatus === 'TRIP_ASSIGNED' || bookingStatus === 'CONFIRMED') ? 'OnAssign' : 'OnSearch';
+    const body = {
+      additionalInfo: '',
+      reasonCode: 'CHANGE_OF_MIND',
+      reasonStage,
+      source: 'ByUser',
+    };
+    console.log(`[cancel] cancelRide bookingId=${bookingId} status=${bookingStatus} body=${JSON.stringify(body)}`);
+    const res = await fetch(`${config.nyBaseUrl}/rideBooking/${bookingId}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: this.token },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.error(`[cancel] cancelRide failed ${res.status}: ${err.substring(0, 300)}`);
+      throw new Error(`Cancel ride failed: ${res.status} ${err.substring(0, 100)}`);
+    }
+  }
+
+  async getActiveBookings(createdAfter?: Date): Promise<any[]> {
+    const activeStatuses = ['NEW', 'CONFIRMED', 'TRIP_ASSIGNED', 'AWAITING_REASSIGNMENT', 'REALLOCATED'];
+    // API expects JSON-encoded string values: rideStatus=%22NEW%22&rideStatus=%22CONFIRMED%22
+    const statusQuery = activeStatuses.map((s) => `rideStatus=${encodeURIComponent(JSON.stringify(s))}`).join('&');
+    const params = `limit=10&${statusQuery}`;
+
+    const url = `${config.nyBaseUrl}/rideBooking/listV2?${params}`;
+    const res = await fetch(url, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
-    if (!res.ok) throw new Error(`Get bookings failed: ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`[booking] getActiveBookings failed: ${res.status} ${body.substring(0, 200)}`);
+      throw new Error(`Get bookings failed: ${res.status}`);
+    }
     const data = await res.json() as any;
-    return data.list || [];
+    const rawList = data.list || [];
+
+    let rides = rawList
+      .filter((item: any) => item.tag === 'Ride')
+      .map((item: any) => item.contents ?? item);
+
+    // If caller provides a reference time, only accept bookings created after it
+    if (createdAfter) {
+      const threshold = createdAfter.getTime();
+      rides = rides.filter((r: any) => {
+        if (!r.createdAt) return false;
+        return new Date(r.createdAt).getTime() >= threshold;
+      });
+      console.log(`[booking] getActiveBookings: ${rawList.length} raw → ${rides.length} after createdAfter=${createdAfter.toISOString()}`);
+    } else {
+      console.log(`[booking] getActiveBookings: ${rawList.length} raw → ${rides.length} rides`);
+    }
+
+    if (rides.length > 0) {
+      console.log(`[booking] match: id=${rides[0].id} status=${rides[0].status} createdAt=${rides[0].createdAt}`);
+    }
+    return rides;
+  }
+
+  async getRideHistory(limit = 10): Promise<NYRideHistoryItem[]> {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      onlyActive: 'false',
+      clientId: 'ACP_SERVER',
+    });
+    const url = `${config.nyBaseUrl}/rideBooking/listV2?${params}`;
+    console.log(`[history] GET ${url}`);
+    const res = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', token: this.token },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Get ride history failed: ${res.status} ${body}`);
+    }
+    const data = await res.json() as any;
+    const list = data.list || [];
+    console.log(`[history] raw list length: ${list.length}`);
+    if (list.length > 0) {
+      const c = list[0]?.contents || list[0];
+      console.log(`[history] contents keys: ${Object.keys(c).join(', ')}`);
+    }
+    return list.map((item: any) => {
+      const c = item.contents ?? item;
+      return {
+        id: c.id,
+        status: c.status,
+        createdAt: c.createdAt,
+        vehicleVariant: c.vehicleServiceTierType ?? c.vehicleVariant,
+        serviceTierName: c.serviceTierName,
+        estimatedFare: c.estimatedFare,
+        fromLocation: c.fromLocation,
+        toLocation: c.bookingDetails?.contents?.toLocation ?? c.toLocation,
+      };
+    });
   }
 }
