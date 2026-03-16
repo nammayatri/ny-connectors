@@ -12,11 +12,13 @@ export type FlowState =
   | 'SEARCHING_RIDES'
   | 'SHOWING_ESTIMATES'
   | 'BOOKING'
-  | 'TRACKING';
+  | 'TRACKING'
+  | 'CONFIRMING_CANCEL';
 
 export interface FlowContext {
   state: FlowState;
   nyToken?: string;
+  personId?: string;        // from auth response person.id
   savedLocations?: NYSavedLocation[];
   phone?: string;
   origin?: NYPlaceDetails;
@@ -27,6 +29,10 @@ export interface FlowContext {
   searchId?: string;
   estimates?: NYEstimate[];
   selectedEstimateId?: string;
+  selectedServiceTier?: string;   // serviceTierName of last chosen vehicle, for retry
+  activeBookingId?: string;
+  selectStartedAt?: string;   // ISO timestamp just before selectEstimate — used to filter listV2 results
+  cancelRequested?: boolean;
 }
 
 export const INITIAL_CONTEXT: FlowContext = {

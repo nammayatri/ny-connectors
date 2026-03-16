@@ -1,45 +1,7 @@
 {
-  "telegram:6542524708": {
-    "nyToken": "edb048e3-4ab9-404f-a1e0-24189aa7f9f7",
-    "phone": "9729478477",
-    "savedLocations": [
-      {
-        "area": "New Friends Colony",
-        "areaCode": "560047",
-        "building": "New Friends Colony",
-        "city": "Bengaluru",
-        "country": "India",
-        "door": "5th cross, 10th Main Rd",
-        "lat": 12.935785,
-        "locationName": null,
-        "lon": 77.6340519,
-        "placeId": "ChIJQyO0hWgUrjsRMHNlNqc-Fy8",
-        "state": "Karnataka 560047",
-        "street": "S T Bed Layout",
-        "tag": "Home",
-        "ward": "Koramangala, S T Bed Layout, New Friends Colony"
-      },
-      {
-        "area": "Koramangala ",
-        "areaCode": null,
-        "building": "Ganapathi Temple Road ",
-        "city": "Bengaluru ",
-        "country": "India ",
-        "door": "Namma Yatri (Girija building) ",
-        "lat": 12.9421096,
-        "locationName": null,
-        "lon": 77.6219425,
-        "placeId": "ChIJm2Me9kYUrjsR9mNDlqzs_Bc",
-        "state": "Karnataka ",
-        "street": "Koramangala 8th Block",
-        "tag": "Work",
-        "ward": "Koramangala, Koramangala 8th Block, Ganapathi Temple Road"
-      }
-    ],
-    "authenticatedAt": "2026-03-12T07:17:17.304Z"
-  },
   "whatsapp:919930081991": {
     "nyToken": "e5656434-f702-4f1e-a3f0-f676a8ecc55b",
+    "personId": "",
     "phone": "9930081991",
     "savedLocations": [
       {
@@ -91,6 +53,6 @@
         "ward": "HSR Layout, 1st Sector"
       }
     ],
-    "authenticatedAt": "2026-03-12T08:31:13.164Z"
+    "authenticatedAt": "2026-03-12T14:40:03.875Z"
   }
 }

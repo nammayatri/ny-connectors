@@ -30,7 +30,7 @@ export const config: Config = {
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
   sessionTtlSeconds: parseInt(process.env.SESSION_TTL_SECONDS || '1800', 10),
   nyBaseUrl: process.env.NY_BASE_URL || 'https://api.moving.tech/pilot/app/v2',
-  nyAuthUrl: process.env.NY_AUTH_URL || 'https://api.sandbox.moving.tech/dev/app/v2',
+  nyAuthUrl: process.env.NY_AUTH_URL || 'https://api.moving.tech/pilot/app/v2',
   nyPreAuthToken: process.env.NY_PRE_AUTH_TOKEN || '',
   telegramSecretToken: process.env.TELEGRAM_SECRET_TOKEN || '',
   nyAppSecret: process.env.NY_APP_SECRET || '',

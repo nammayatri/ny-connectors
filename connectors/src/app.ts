@@ -64,8 +64,11 @@ app.get('/webhook/whatsapp', (req: Request, res: Response) => {
 
   if (mode === 'subscribe' && token === config.whatsappVerifyToken) {
     console.log('[whatsapp] Webhook verified');
-    res.status(200).send(challenge);
+    res.status(200).send(String(challenge ?? ''));
     return;
+  }
+  if (mode === 'subscribe') {
+    console.warn('[whatsapp] Verify failed: token mismatch or missing WHATSAPP_VERIFY_TOKEN in .env');
   }
   res.sendStatus(403);
 });

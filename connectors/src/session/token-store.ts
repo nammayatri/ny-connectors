@@ -3,6 +3,7 @@ import path from 'path';
 
 interface UserAuth {
   nyToken: string;
+  personId?: string;
   phone: string;
   savedLocations?: any[];
   authenticatedAt: string;
