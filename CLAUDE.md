@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ny-connectors is a multi-interface toolkit for booking rides via Namma Yatri APIs. It provides three ways to interact with the platform:
 
 1. **MCP Server** (`mcp/`) — TypeScript MCP server exposing 9 tools for AI assistants
-2. **CLI** (`cli/`) — Bash CLI tool (`ny-cli`) for terminal-based ride booking
+2. **CLI** (`cli/`) — Bash CLI tool (`nycli`) for terminal-based ride booking
 3. **Skill** (`skill.md`) — Curl-based skill file for LLM tools that don't support MCP (e.g., openClaw)
 
 ## Repository Structure
@@ -20,7 +20,7 @@ ny-connectors/
 │   ├── tsconfig.json
 │   └── Dockerfile
 ├── cli/
-│   └── ny-cli.sh           # Bash CLI tool
+│   └── nycli.sh           # Bash CLI tool
 ├── skill.md                # LLM skill file (curl-based)
 ├── install.sh              # CLI installer (curl | sh)
 ├── .github/workflows/      # CI/CD
@@ -40,7 +40,7 @@ All commands run from the `mcp/` directory:
 
 Install: `curl -sSL https://raw.githubusercontent.com/nammayatri/ny-connectors/main/install.sh | sh`
 
-Run: `ny-cli help` for all subcommands.
+Run: `nycli help` for all subcommands.
 
 No test or lint commands are configured.
 
