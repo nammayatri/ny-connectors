@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# ny-cli — Namma Yatri CLI
+# nycli — Namma Yatri CLI
 # Book and manage rides from your terminal
 # =============================================================================
 
@@ -163,14 +163,14 @@ update_saved_locations() {
 
 clear_token() {
     rm -f "$TOKEN_FILE"
-    warn "Token cleared. Please re-authenticate with: ny-cli auth"
+    warn "Token cleared. Please re-authenticate with: nycli auth"
 }
 
 require_token() {
     local token
     token=$(read_token)
     if [ -z "$token" ]; then
-        err "Not authenticated. Run 'ny-cli auth' first."
+        err "Not authenticated. Run 'nycli auth' first."
         exit 1
     fi
     printf '%s' "$token"
@@ -213,7 +213,7 @@ api_call() {
         401)
             clear_token
             err "Authentication failed (401). Token expired or invalid."
-            err "Please re-authenticate: ny-cli auth"
+            err "Please re-authenticate: nycli auth"
             exit 1
             ;;
         *)
@@ -259,7 +259,7 @@ api_call_raw() {
     if [ "$http_code" = "401" ]; then
         clear_token
         err "Authentication failed (401). Token expired or invalid."
-        err "Please re-authenticate: ny-cli auth"
+        err "Please re-authenticate: nycli auth"
         exit 1
     fi
 
@@ -398,7 +398,7 @@ cmd_auth() {
 
 cmd_places() {
     if [ $# -eq 0 ]; then
-        err "Usage: ny-cli places <search text>"
+        err "Usage: nycli places <search text>"
         exit 1
     fi
 
@@ -483,7 +483,7 @@ cmd_place_details() {
             "sessionToken":"default-token"
         }' "$place_id")
     else
-        err "Usage: ny-cli place-details --place-id <id>  OR  --lat <lat> --lon <lon>"
+        err "Usage: nycli place-details --place-id <id>  OR  --lat <lat> --lon <lon>"
         exit 1
     fi
 
@@ -536,7 +536,7 @@ cmd_search() {
     done
 
     if [ -z "$from_lat" ] || [ -z "$from_lon" ] || [ -z "$to_lat" ] || [ -z "$to_lon" ]; then
-        err "Usage: ny-cli search --from-lat <lat> --from-lon <lon> --to-lat <lat> --to-lon <lon>"
+        err "Usage: nycli search --from-lat <lat> --from-lon <lon> --to-lat <lat> --to-lon <lon>"
         exit 1
     fi
 
@@ -633,7 +633,7 @@ cmd_select() {
     done
 
     if [ -z "$estimate_id" ]; then
-        err "Usage: ny-cli select --estimate-id <id> [--also <id2,id3>] [--pet] [--special-assistance]"
+        err "Usage: nycli select --estimate-id <id> [--also <id2,id3>] [--pet] [--special-assistance]"
         exit 1
     fi
 
@@ -705,7 +705,7 @@ cmd_tip() {
     done
 
     if [ -z "$estimate_id" ] || [ -z "$amount" ]; then
-        err "Usage: ny-cli tip --estimate-id <id> --amount <number> [--currency INR]"
+        err "Usage: nycli tip --estimate-id <id> --amount <number> [--currency INR]"
         exit 1
     fi
 
@@ -741,7 +741,7 @@ cmd_cancel() {
     done
 
     if [ -z "$estimate_id" ]; then
-        err "Usage: ny-cli cancel --estimate-id <id>"
+        err "Usage: nycli cancel --estimate-id <id>"
         exit 1
     fi
 
@@ -917,7 +917,7 @@ cmd_cancellation_reasons() {
     done
 
     if [ -z "$stage" ]; then
-        err "Usage: ny-cli cancellation-reasons --stage <OnSearch|OnInit|OnConfirm|OnAssign>"
+        err "Usage: nycli cancellation-reasons --stage <OnSearch|OnInit|OnConfirm|OnAssign>"
         exit 1
     fi
 
@@ -970,7 +970,7 @@ cmd_cancel_booking() {
     done
 
     if [ -z "$booking_id" ] || [ -z "$reason_code" ] || [ -z "$reason_stage" ]; then
-        err "Usage: ny-cli cancel-booking --booking-id <id> --reason-code <code> --reason-stage <stage>"
+        err "Usage: nycli cancel-booking --booking-id <id> --reason-code <code> --reason-stage <stage>"
         err "  Optional: --additional-info <text> --reallocate"
         exit 1
     fi
@@ -1018,7 +1018,7 @@ cmd_booking_details() {
     done
 
     if [ -z "$booking_id" ]; then
-        err "Usage: ny-cli booking-details --booking-id <id>"
+        err "Usage: nycli booking-details --booking-id <id>"
         exit 1
     fi
 
@@ -1070,7 +1070,7 @@ cmd_ride_status() {
     done
 
     if [ -z "$ride_id" ]; then
-        err "Usage: ny-cli ride-status --ride-id <id>"
+        err "Usage: nycli ride-status --ride-id <id>"
         exit 1
     fi
 
@@ -1139,7 +1139,7 @@ cmd_post_tip() {
     done
 
     if [ -z "$ride_id" ] || [ -z "$amount" ]; then
-        err "Usage: ny-cli post-tip --ride-id <id> --amount <number> [--currency INR]"
+        err "Usage: nycli post-tip --ride-id <id> --amount <number> [--currency INR]"
         exit 1
     fi
 
@@ -1166,7 +1166,7 @@ cmd_price_breakdown() {
     done
 
     if [ -z "$booking_id" ]; then
-        err "Usage: ny-cli price-breakdown --booking-id <id>"
+        err "Usage: nycli price-breakdown --booking-id <id>"
         exit 1
     fi
 
@@ -1210,10 +1210,10 @@ cmd_price_breakdown() {
 cmd_help() {
     cat <<HELPEOF
 
-${BOLD}ny-cli${NC} v${VERSION} — Namma Yatri CLI
+${BOLD}nycli${NC} v${VERSION} — Namma Yatri CLI
 
 ${BOLD}USAGE${NC}
-    ny-cli <command> [options]
+    nycli <command> [options]
 
 ${BOLD}COMMANDS${NC}
     ${CYAN}auth${NC}               Authenticate with Namma Yatri
@@ -1236,52 +1236,52 @@ ${BOLD}COMMANDS${NC}
 
 ${BOLD}EXAMPLES${NC}
     ${DIM}# Authenticate${NC}
-    ny-cli auth --mobile 9876543210 --code YOUR_ACCESS_CODE
+    nycli auth --mobile 9876543210 --code YOUR_ACCESS_CODE
 
     ${DIM}# Search for a place${NC}
-    ny-cli places "Koramangala"
+    nycli places "Koramangala"
 
     ${DIM}# Get place coordinates${NC}
-    ny-cli place-details --place-id "ChIJx9..."
+    nycli place-details --place-id "ChIJx9..."
 
     ${DIM}# Search for rides${NC}
-    ny-cli search --from-lat 12.935 --from-lon 77.624 --to-lat 12.971 --to-lon 77.594
+    nycli search --from-lat 12.935 --from-lon 77.624 --to-lat 12.971 --to-lon 77.594
 
     ${DIM}# Select an estimate${NC}
-    ny-cli select --estimate-id "abc-123"
+    nycli select --estimate-id "abc-123"
 
     ${DIM}# Select multiple estimates${NC}
-    ny-cli select --estimate-id "abc-123" --also "def-456,ghi-789"
+    nycli select --estimate-id "abc-123" --also "def-456,ghi-789"
 
     ${DIM}# Add a tip${NC}
-    ny-cli tip --estimate-id "abc-123" --amount 20
+    nycli tip --estimate-id "abc-123" --amount 20
 
     ${DIM}# Cancel a search${NC}
-    ny-cli cancel --estimate-id "abc-123"
+    nycli cancel --estimate-id "abc-123"
 
     ${DIM}# Check active rides${NC}
-    ny-cli status --active
+    nycli status --active
 
     ${DIM}# All rides${NC}
-    ny-cli status --all
+    nycli status --all
 
     ${DIM}# List cancellation reasons${NC}
-    ny-cli cancellation-reasons --stage OnConfirm
+    nycli cancellation-reasons --stage OnConfirm
 
     ${DIM}# Cancel a confirmed booking${NC}
-    ny-cli cancel-booking --booking-id "abc-123" --reason-code "OTHER" --reason-stage OnConfirm
+    nycli cancel-booking --booking-id "abc-123" --reason-code "OTHER" --reason-stage OnConfirm
 
     ${DIM}# Get booking details${NC}
-    ny-cli booking-details --booking-id "abc-123"
+    nycli booking-details --booking-id "abc-123"
 
     ${DIM}# Get live ride status${NC}
-    ny-cli ride-status --ride-id "abc-123"
+    nycli ride-status --ride-id "abc-123"
 
     ${DIM}# Add post-ride tip${NC}
-    ny-cli post-tip --ride-id "abc-123" --amount 50
+    nycli post-tip --ride-id "abc-123" --amount 50
 
     ${DIM}# Get fare breakdown${NC}
-    ny-cli price-breakdown --booking-id "abc-123"
+    nycli price-breakdown --booking-id "abc-123"
 
 ${BOLD}ENVIRONMENT${NC}
     NY_API_BASE    Override API base URL (default: https://api.moving.tech/pilot/app/v2)
@@ -1318,7 +1318,7 @@ main() {
         post-tip)              cmd_post_tip "$@" ;;
         price-breakdown)       cmd_price_breakdown "$@" ;;
         help|--help|-h)        cmd_help ;;
-        version|--version|-v)  echo "ny-cli $VERSION" ;;
+        version|--version|-v)  echo "nycli $VERSION" ;;
         *)
             err "Unknown command: $cmd"
             echo ""

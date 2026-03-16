@@ -19,13 +19,13 @@ curl -sSL https://raw.githubusercontent.com/nammayatri/ny-connectors/main/instal
 Then:
 
 ```bash
-ny-cli auth --mobile 9876543210 --code YOUR_ACCESS_CODE
-ny-cli places "Koramangala"
-ny-cli search --from-lat 12.935 --from-lon 77.624 --to-lat 12.971 --to-lon 77.594
-ny-cli status
+nycli auth --mobile 9876543210 --code YOUR_ACCESS_CODE
+nycli places "Koramangala"
+nycli search --from-lat 12.935 --from-lon 77.624 --to-lat 12.971 --to-lon 77.594
+nycli status
 ```
 
-Run `ny-cli help` for all commands.
+Run `nycli help` for all commands.
 
 ### Skill (for LLM tools)
 
@@ -51,7 +51,7 @@ ny-connectors/
 │   ├── tsconfig.json
 │   └── Dockerfile
 ├── cli/
-│   └── ny-cli.sh                 # Bash CLI tool
+│   └── nycli.sh                  # Bash CLI tool
 ├── skill.md                      # LLM skill file (curl-based)
 ├── install.sh                    # CLI installer
 ├── CLAUDE.md                     # Claude Code instructions
@@ -71,64 +71,64 @@ ny-connectors/
 curl -sSL https://raw.githubusercontent.com/nammayatri/ny-connectors/main/install.sh | sh
 ```
 
-Installs `ny-cli` to `~/.local/bin/`. Requires `curl` and `bash`. Install [`jq`](https://jqlang.github.io/jq/) for formatted output.
+Installs `nycli` to `~/.local/bin/`. Requires `curl` and `bash`. Install [`jq`](https://jqlang.github.io/jq/) for formatted output.
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `ny-cli auth` | Authenticate with Namma Yatri |
-| `ny-cli places <text>` | Search for places (autocomplete) |
-| `ny-cli place-details` | Get place coordinates and address |
-| `ny-cli search` | Search for available rides |
-| `ny-cli select` | Select an estimate to book a ride |
-| `ny-cli tip` | Add a tip and select estimate |
-| `ny-cli cancel` | Cancel an active search |
-| `ny-cli status` | Check ride booking status |
-| `ny-cli saved-locations` | List saved locations (Home, Work, etc.) |
-| `ny-cli help` | Show help |
+| `nycli auth` | Authenticate with Namma Yatri |
+| `nycli places <text>` | Search for places (autocomplete) |
+| `nycli place-details` | Get place coordinates and address |
+| `nycli search` | Search for available rides |
+| `nycli select` | Select an estimate to book a ride |
+| `nycli tip` | Add a tip and select estimate |
+| `nycli cancel` | Cancel an active search |
+| `nycli status` | Check ride booking status |
+| `nycli saved-locations` | List saved locations (Home, Work, etc.) |
+| `nycli help` | Show help |
 
 ### Examples
 
 ```bash
 # Authenticate
-ny-cli auth --mobile 9876543210 --code YOUR_CODE
+nycli auth --mobile 9876543210 --code YOUR_CODE
 
 # Interactive auth (prompts for input)
-ny-cli auth
+nycli auth
 
 # Search for a place
-ny-cli places "Koramangala"
+nycli places "Koramangala"
 
 # Get coordinates for a place
-ny-cli place-details --place-id "ChIJx9..."
+nycli place-details --place-id "ChIJx9..."
 
 # Get address from coordinates
-ny-cli place-details --lat 12.935 --lon 77.624
+nycli place-details --lat 12.935 --lon 77.624
 
 # Search for rides
-ny-cli search --from-lat 12.935 --from-lon 77.624 --to-lat 12.971 --to-lon 77.594
+nycli search --from-lat 12.935 --from-lon 77.624 --to-lat 12.971 --to-lon 77.594
 
 # Select an estimate
-ny-cli select --estimate-id "abc-123"
+nycli select --estimate-id "abc-123"
 
 # Select multiple estimates
-ny-cli select --estimate-id "abc-123" --also "def-456,ghi-789"
+nycli select --estimate-id "abc-123" --also "def-456,ghi-789"
 
 # Add a tip
-ny-cli tip --estimate-id "abc-123" --amount 20
+nycli tip --estimate-id "abc-123" --amount 20
 
 # Cancel a search
-ny-cli cancel --estimate-id "abc-123"
+nycli cancel --estimate-id "abc-123"
 
 # Check active rides
-ny-cli status --active
+nycli status --active
 
 # Check all rides
-ny-cli status --all
+nycli status --all
 
 # List saved locations
-ny-cli saved-locations
+nycli saved-locations
 ```
 
 ### Environment Variables
@@ -264,13 +264,13 @@ The CI pipeline builds and pushes the MCP image to `ghcr.io/nammayatri/ny-mcp` o
 ## Example Flow
 
 ```
-1. Authenticate:    ny-cli auth
-2. Search place:    ny-cli places "Koramangala"
-3. Get details:     ny-cli place-details --place-id "ChIJ..."
-4. Search rides:    ny-cli search --from-lat 12.93 --from-lon 77.62 --to-lat 12.97 --to-lon 77.59
-5. Book a ride:     ny-cli select --estimate-id "abc-123"
-6. Check status:    ny-cli status
-7. Cancel if needed: ny-cli cancel --estimate-id "abc-123"
+1. Authenticate:    nycli auth
+2. Search place:    nycli places "Koramangala"
+3. Get details:     nycli place-details --place-id "ChIJ..."
+4. Search rides:    nycli search --from-lat 12.93 --from-lon 77.62 --to-lat 12.97 --to-lon 77.59
+5. Book a ride:     nycli select --estimate-id "abc-123"
+6. Check status:    nycli status
+7. Cancel if needed: nycli cancel --estimate-id "abc-123"
 ```
 
 ## License

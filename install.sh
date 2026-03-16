@@ -2,15 +2,15 @@
 set -e
 
 # =============================================================================
-# ny-cli installer
+# nycli installer
 # Usage: curl -sSL https://raw.githubusercontent.com/nammayatri/ny-connectors/main/install.sh | sh
 # =============================================================================
 
 REPO="nammayatri/ny-connectors"
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
-SCRIPT_URL="${RAW_BASE}/cli/ny-cli.sh"
-BINARY_NAME="ny-cli"
+SCRIPT_URL="${RAW_BASE}/cli/nycli.sh"
+BINARY_NAME="nycli"
 
 echo "Installing ${BINARY_NAME}..."
 
@@ -51,7 +51,7 @@ echo "${BINARY_NAME} installed to ${INSTALL_DIR}/${BINARY_NAME}"
 # Check PATH
 case ":$PATH:" in
     *":${INSTALL_DIR}:"*)
-        echo "Run 'ny-cli help' to get started."
+        echo "Run 'nycli help' to get started."
         ;;
     *)
         echo ""
