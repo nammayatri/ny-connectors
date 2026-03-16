@@ -95,6 +95,36 @@ export class NammaYatriClient {
     return data.id || data.personId || data.customerId || data.userId || '';
   }
 
+  async saveLocation(tag: string, details: NYPlaceDetails): Promise<void> {
+    const res = await fetch(`${config.nyBaseUrl}/savedLocation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: this.token },
+      body: JSON.stringify({
+        area: details.address.area || '',
+        areaCode: '',
+        building: details.address.building || '',
+        city: details.address.city || '',
+        country: details.address.country || '',
+        door: '',
+        isMoved: false,
+        lat: details.lat,
+        locationName: '',
+        lon: details.lon,
+        placeId: details.placeId || '',
+        state: details.address.state || '',
+        street: details.address.street || '',
+        tag,
+        ward: '',
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.error(`[savedLocation] save failed ${res.status}: ${err.substring(0, 300)}`);
+      throw new Error(`Save location failed: ${res.status}`);
+    }
+    console.log(`[savedLocation] saved tag=${tag} placeId=${details.placeId}`);
+  }
+
   async getSavedLocations(): Promise<NYSavedLocation[]> {
     const res = await fetch(`${config.nyBaseUrl}/savedLocation/list`, {
       headers: { 'Content-Type': 'application/json', token: this.token },
@@ -138,50 +168,106 @@ export class NammaYatriClient {
       }),
     });
     if (!res.ok) throw new Error(`Place details failed: ${res.status}`);
-    const data = await res.json() as any;
+    const raw = await res.json() as any;
+    // API returns an array — take the first element
+    const data = Array.isArray(raw) ? raw[0] : raw;
+    // Coordinates are in data.location (Google Places style), address in addressComponents
+    const loc = data?.location || {};
+    const components = data?.addressComponents || [];
+    const getComponent = (type: string) =>
+      components.find((c: any) => c.types?.includes(type))?.longName || '';
+    console.log(`[getPlaceDetails] lat=${loc.lat} lon=${loc.lng || loc.lon} placeId=${data?.placeId}`);
     return {
-      lat: data.lat,
-      lon: data.lon,
-      placeId: data.placeId,
-      address: data.address || {},
+      lat: loc.lat,
+      lon: loc.lng || loc.lon,
+      placeId: data?.placeId || placeId,
+      address: {
+        area: getComponent('sublocality_level_1') || getComponent('sublocality'),
+        building: getComponent('premise') || getComponent('street_number'),
+        city: getComponent('locality'),
+        state: getComponent('administrative_area_level_1'),
+        country: getComponent('country'),
+        street: getComponent('route'),
+      },
+    };
+  }
+
+  async reverseGeocode(lat: number, lon: number): Promise<NYPlaceDetails> {
+    const res = await fetch(`${config.nyBaseUrl}/maps/getPlaceName`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: this.token },
+      body: JSON.stringify({
+        getBy: { contents: `${lat},${lon}`, tag: 'ByLatLong' },
+        language: 'ENGLISH',
+        sessionToken: 'default-token',
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[ny] reverseGeocode failed: ${res.status}`);
+      return { lat, lon, placeId: `${lat},${lon}`, address: {} };
+    }
+    const raw = await res.json() as any;
+    const data = Array.isArray(raw) ? raw[0] : raw;
+    const loc = data?.location || {};
+    const components = data?.addressComponents || [];
+    const getComponent = (type: string) =>
+      components.find((c: any) => c.types?.includes(type))?.longName || '';
+    return {
+      lat: loc.lat ?? lat,
+      lon: (loc.lng || loc.lon) ?? lon,
+      placeId: data?.placeId || `${lat},${lon}`,
+      address: {
+        area: getComponent('sublocality_level_1') || getComponent('sublocality'),
+        building: getComponent('premise') || getComponent('street_number'),
+        city: getComponent('locality'),
+        state: getComponent('administrative_area_level_1'),
+        country: getComponent('country'),
+        street: getComponent('route'),
+      },
     };
   }
 
   async searchRide(origin: NYPlaceDetails, destination: NYPlaceDetails): Promise<string> {
+    const body = {
+      contents: {
+        origin: {
+          gps: { lat: origin.lat, lon: origin.lon },
+          address: {
+            area: origin.address.area || '',
+            city: origin.address.city || '',
+            country: origin.address.country || '',
+            building: origin.address.building || '',
+            placeId: origin.placeId,
+            state: origin.address.state || '',
+          },
+        },
+        destination: {
+          gps: { lat: destination.lat, lon: destination.lon },
+          address: {
+            area: destination.address.area || '',
+            city: destination.address.city || '',
+            country: destination.address.country || '',
+            building: destination.address.building || '',
+            placeId: destination.placeId,
+            state: destination.address.state || '',
+          },
+        },
+        placeNameSource: 'API_MCP',
+        platformType: 'APPLICATION',
+      },
+      fareProductType: 'ONE_WAY',
+    };
+    console.log(`[rideSearch] request: ${JSON.stringify(body).substring(0, 800)}`);
     const res = await fetch(`${config.nyBaseUrl}/rideSearch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
-      body: JSON.stringify({
-        contents: {
-          origin: {
-            gps: { lat: origin.lat, lon: origin.lon },
-            address: {
-              area: origin.address.area || '',
-              city: origin.address.city || '',
-              country: origin.address.country || '',
-              building: origin.address.building || '',
-              placeId: origin.placeId,
-              state: origin.address.state || '',
-            },
-          },
-          destination: {
-            gps: { lat: destination.lat, lon: destination.lon },
-            address: {
-              area: destination.address.area || '',
-              city: destination.address.city || '',
-              country: destination.address.country || '',
-              building: destination.address.building || '',
-              placeId: destination.placeId,
-              state: destination.address.state || '',
-            },
-          },
-          placeNameSource: 'API_MCP',
-          platformType: 'APPLICATION',
-        },
-        fareProductType: 'ONE_WAY',
-      }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`Ride search failed: ${res.status}`);
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      console.error(`[rideSearch] failed ${res.status}: ${errBody.substring(0, 500)}`);
+      throw new Error(`Ride search failed: ${res.status}`);
+    }
     const data = await res.json() as any;
     return data.searchId;
   }
@@ -190,7 +276,14 @@ export class NammaYatriClient {
     const res = await fetch(`${config.nyBaseUrl}/rideSearch/${searchId}/results`, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
-    if (!res.ok) throw new Error(`Get estimates failed: ${res.status}`);
+    if (!res.ok) {
+      // 400 is common while search is still processing — return empty so polling continues
+      if (res.status === 400) {
+        console.log(`[estimates] searchId=${searchId} not ready yet (400)`);
+        return [];
+      }
+      throw new Error(`Get estimates failed: ${res.status}`);
+    }
     const data = await res.json() as any;
     return (data.estimates || []).map((e: any) => ({
       id: e.id,
@@ -264,6 +357,51 @@ export class NammaYatriClient {
       body: JSON.stringify({}),
     });
     if (!res.ok) throw new Error(`Cancel search failed: ${res.status}`);
+  }
+
+  async triggerSOS(rideId: string, customerLat?: number, customerLon?: number): Promise<string> {
+    const res = await fetch(`${config.nyBaseUrl}/sos/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: this.token },
+      body: JSON.stringify({
+        customerLocation: {
+          lat: customerLat || 0,
+          lon: customerLon || 0,
+        },
+        flow: { tag: 'Police' },
+        isRideEnded: false,
+        notifyAllContacts: true,
+        rideId,
+        sendPNOnPostRideSOS: true,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.error(`[sos] triggerSOS failed ${res.status}: ${err.substring(0, 300)}`);
+      throw new Error(`SOS failed: ${res.status}`);
+    }
+    const data = await res.json() as any;
+    console.log(`[sos] SOS triggered for rideId=${rideId} sosId=${data.sosId}`);
+    return data.sosId;
+  }
+
+  async markRideAsSafe(sosId: string): Promise<void> {
+    const res = await fetch(`${config.nyBaseUrl}/sos/markRideAsSafe/${sosId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: this.token },
+      body: JSON.stringify({
+        contacts: [],
+        isEndLiveTracking: true,
+        isMock: false,
+        isRideEnded: false,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.error(`[sos] markRideAsSafe failed ${res.status}: ${err.substring(0, 300)}`);
+      throw new Error(`Mark safe failed: ${res.status}`);
+    }
+    console.log(`[sos] Ride marked as safe for sosId=${sosId}`);
   }
 
   async cancelRide(bookingId: string, bookingStatus?: string): Promise<void> {

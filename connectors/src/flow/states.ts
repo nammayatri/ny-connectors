@@ -15,6 +15,10 @@ export type FlowState =
   | 'BOOKING'
   | 'TRACKING'
   | 'CONFIRMING_CANCEL'
+  | 'CONFIRMING_SOS'
+  | 'CONFIRMING_MARK_SAFE'
+  | 'AWAITING_ADD_LOCATION'
+  | 'CONFIRMING_ADD_LOCATION'
   | 'CHOOSING_LANGUAGE';
 
 export interface FlowContext {
@@ -35,6 +39,9 @@ export interface FlowContext {
   activeBookingId?: string;
   selectStartedAt?: string;   // ISO timestamp just before selectEstimate — used to filter listV2 results
   cancelRequested?: boolean;
+  sosId?: string;
+  addingLocationTag?: string;
+  addLocationOptions?: { description: string; placeId: string }[];
   language?: SupportedLanguage;
 }
 

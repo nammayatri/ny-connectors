@@ -34,6 +34,33 @@ export class SlackConnector implements Connector {
     const body = req.body;
     if (body?.type === 'url_verification') return null;
 
+    // Handle interactive payloads (button clicks)
+    if (body?.payload) {
+      try {
+        const payload = JSON.parse(body.payload);
+        if (payload.type === 'block_actions' && payload.actions?.[0]) {
+          const action = payload.actions[0];
+          return {
+            source: 'slack',
+            messageId: payload.trigger_id || action.action_ts,
+            senderId: payload.user?.id || '',
+            senderName: payload.user?.username || payload.user?.id || 'unknown',
+            chatId: payload.channel?.id || payload.container?.channel_id || '',
+            chatType: 'direct',
+            text: action.value || action.action_id || '',
+            timestamp: new Date().toISOString(),
+            sessionId: '',
+            metadata: {
+              teamId: payload.team?.id,
+              isCallback: true,
+            },
+            raw: body,
+          };
+        }
+      } catch { /* fall through */ }
+      return null;
+    }
+
     const event = body?.event;
     if (!event || event.type !== 'message' || event.subtype) return null;
     if (event.bot_id) return null;
@@ -64,13 +91,39 @@ export class SlackConnector implements Connector {
   }
 
   async sendMessage(chatId: string, text: string): Promise<void> {
+    await this.postSlack(chatId, { channel: chatId, text });
+  }
+
+  async sendWithButtons(chatId: string, text: string, buttons: { text: string; data: string; description?: string }[]): Promise<void> {
+    const blocks: any[] = [
+      { type: 'section', text: { type: 'mrkdwn', text } },
+    ];
+
+    // Use Slack Block Kit actions with buttons (max 5 per block)
+    for (let i = 0; i < buttons.length; i += 5) {
+      const chunk = buttons.slice(i, i + 5);
+      blocks.push({
+        type: 'actions',
+        elements: chunk.map((b) => ({
+          type: 'button',
+          text: { type: 'plain_text', text: b.text.substring(0, 75), emoji: true },
+          action_id: b.data.substring(0, 255),
+          value: b.data.substring(0, 255),
+        })),
+      });
+    }
+
+    await this.postSlack(chatId, { channel: chatId, text, blocks });
+  }
+
+  private async postSlack(chatId: string, payload: any): Promise<void> {
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.slackBotToken}`,
       },
-      body: JSON.stringify({ channel: chatId, text }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       console.error(`[slack] sendMessage failed: ${res.status}`);

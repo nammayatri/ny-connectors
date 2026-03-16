@@ -39,6 +39,7 @@ export class WhatsAppConnector implements Connector {
 
     // Extract text from different message types
     let text = '';
+    let locationData: { latitude: number; longitude: number } | undefined;
     if (message.type === 'text') {
       text = message.text?.body || '';
     } else if (message.type === 'interactive') {
@@ -46,6 +47,12 @@ export class WhatsAppConnector implements Connector {
       text = message.interactive?.button_reply?.id
         || message.interactive?.list_reply?.id
         || '';
+    } else if (message.type === 'location') {
+      locationData = {
+        latitude: message.location?.latitude,
+        longitude: message.location?.longitude,
+      };
+      text = '__location_pin__';
     } else {
       return null;
     }
@@ -65,6 +72,7 @@ export class WhatsAppConnector implements Connector {
         displayPhoneNumber: value.metadata?.display_phone_number,
         waId: contact?.wa_id,
         senderPhone: message.from,
+        ...(locationData && { location: locationData }),
       },
       raw: body,
     };
@@ -80,7 +88,8 @@ export class WhatsAppConnector implements Connector {
   }
 
   async sendWithButtons(chatId: string, text: string, buttons: { text: string; data: string; description?: string }[]): Promise<void> {
-    if (buttons.length <= 3) {
+    const hasDescriptions = buttons.some((b) => b.description);
+    if (buttons.length <= 3 && !hasDescriptions) {
       // Reply buttons (max 3)
       await this.sendWhatsApp(chatId, {
         messaging_product: 'whatsapp',
