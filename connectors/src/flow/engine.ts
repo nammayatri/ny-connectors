@@ -413,6 +413,27 @@ export class FlowEngine {
         return;
       }
 
+      // Auto-extract phone number from channel when possible
+      const autoPhone = this.extractPhoneFromChannel(msg);
+      if (autoPhone) {
+        ctx.phone = autoPhone;
+        ctx.state = 'AWAITING_ACCESS_CODE';
+        await this.saveContext(msg, ctx);
+        await reply(s.enterAccessCode);
+        return;
+      }
+
+      // Telegram: use contact sharing button instead of typing
+      if (msg.source === 'telegram' && connector instanceof TelegramConnector) {
+        ctx.state = 'AWAITING_CONTACT';
+        await this.saveContext(msg, ctx);
+        await connector.requestContact(
+          this.getReplyTarget(msg, connector),
+          s.sharePhonePrompt
+        );
+        return;
+      }
+
       ctx.state = 'AWAITING_PHONE';
       await this.saveContext(msg, ctx);
       await reply(s.enterPhone);
@@ -1576,6 +1597,18 @@ export class FlowEngine {
       title: full.substring(0, commaIdx).substring(0, 24),
       description: full.substring(commaIdx + 1).trim().substring(0, 72),
     };
+  }
+
+  private extractPhoneFromChannel(msg: CommandMessage): string | null {
+    if (msg.source === 'whatsapp') {
+      // WhatsApp senderId IS the phone number (e.g. "919876543210")
+      let phone = (msg.metadata?.senderPhone as string || msg.senderId).replace(/[^0-9]/g, '');
+      if (phone.startsWith('91') && phone.length > 10) {
+        phone = phone.substring(2);
+      }
+      if (phone.length === 10) return phone;
+    }
+    return null;
   }
 
   private getReplyTarget(msg: CommandMessage, connector: Connector): string {
