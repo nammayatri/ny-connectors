@@ -1653,4 +1653,13 @@ export class FlowEngine {
   private async saveContext(msg: CommandMessage, ctx: FlowContext): Promise<void> {
     await this.sessionManager.updateContext(msg.source, msg.senderId, ctx);
   }
+
+  private extractPhoneFromChannel(msg: CommandMessage): string | null {
+    if (msg.source !== 'whatsapp') return null;
+    let phone = ((msg.metadata?.senderPhone as string) || msg.senderId || '').replace(/[^0-9]/g, '');
+    if (phone.startsWith('91') && phone.length > 10) {
+      phone = phone.substring(2);
+    }
+    return phone.length === 10 ? phone : null;
+  }
 }
