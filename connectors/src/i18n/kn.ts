@@ -50,6 +50,7 @@ export const kn: LanguageStrings = {
   pickSavedOrType: 'ಉಳಿಸಿದ ಸ್ಥಳ ಆಯ್ಕೆ ಮಾಡಿ ಅಥವಾ ಸ್ಥಳದ ಹೆಸರನ್ನು ಟೈಪ್ ಮಾಡಿ:',
   typePickupPlace: 'ನೀವು ಎಲ್ಲಿಂದ ಹೊರಡುತ್ತೀರಿ?\nಹುಡುಕಲು ಸ್ಥಳದ ಹೆಸರನ್ನು ಟೈಪ್ ಮಾಡಿ:',
   selectPickup: 'ಪಿಕಪ್ ಸ್ಥಳ ಆಯ್ಕೆ ಮಾಡಿ:',
+  searchAgain: '🔍 ಮತ್ತೆ ಹುಡುಕಿ',
   pickup: (place: string) => `ಪಿಕಪ್: ${place}`,
   whereTo: 'ಎಲ್ಲಿಗೆ?\nಹುಡುಕಲು ಸ್ಥಳದ ಹೆಸರನ್ನು ಟೈಪ್ ಮಾಡಿ:',
   whereToWithSaved: 'ಎಲ್ಲಿಗೆ?\n\nಸ್ಥಳ ಆಯ್ಕೆ ಮಾಡಿ ಅಥವಾ ಸ್ಥಳದ ಹೆಸರನ್ನು ಟೈಪ್ ಮಾಡಿ:',

@@ -59,14 +59,15 @@ export class NammaYatriClient {
     this.token = token;
   }
 
-  static async authenticate(mobileNumber: string, accessCode: string): Promise<{ token: string; personId: string; person: any }> {
-    const res = await fetch(`${config.nyAuthUrl}/auth/get-token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        appSecretCode: accessCode,
-        userMobileNo: mobileNumber,
-      }),
+  static async authenticate(mobileNumber: string): Promise<{ token: string; personId: string; person: any }> {
+    const params = new URLSearchParams({
+      mobileNumber,
+      mobileCountryCode: '+91',
+    });
+    const authBase = config.nyAuthUrl.replace(/\/v2\/?$/, '');
+    const res = await fetch(`${authBase}/internal/auth/getToken?${params}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', token: config.nyPreAuthToken },
     });
 
     if (!res.ok) {
@@ -76,9 +77,9 @@ export class NammaYatriClient {
 
     const data = await res.json() as any;
     console.log(`[auth] full response: ${JSON.stringify(data).substring(0, 600)}`);
-    const personId = data.person?.id || data.personId || data.customerId || data.userId || data.id || '';
+    const personId = data.personId || '';
     console.log(`[auth] personId=${personId} token=${data.token?.substring(0, 10)}...`);
-    return { token: data.token, personId, person: data.person };
+    return { token: data.token, personId, person: data };
   }
 
   async getPersonId(): Promise<string> {

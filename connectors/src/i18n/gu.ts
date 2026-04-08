@@ -50,6 +50,7 @@ export const gu: LanguageStrings = {
   pickSavedOrType: 'સાચવેલું સ્થાન પસંદ કરો અથવા સ્થાનનું નામ ટાઈપ કરો:',
   typePickupPlace: 'તમે ક્યાંથી પિકઅપ કરવા માગો છો?\nશોધવા માટે સ્થાનનું નામ ટાઈપ કરો:',
   selectPickup: 'પિકઅપ સ્થાન પસંદ કરો:',
+  searchAgain: '🔍 ફરીથી શોધો',
   pickup: (place: string) => `પિકઅપ: ${place}`,
   whereTo: 'ક્યાં જવું છે?\nશોધવા માટે સ્થાનનું નામ ટાઈપ કરો:',
   whereToWithSaved: 'ક્યાં જવું છે?\n\nસ્થાન પસંદ કરો અથવા સ્થાનનું નામ ટાઈપ કરો:',

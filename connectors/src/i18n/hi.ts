@@ -50,6 +50,7 @@ export const hi: LanguageStrings = {
   pickSavedOrType: 'सेव की गई जगह चुनें या जगह का नाम टाइप करें:',
   typePickupPlace: 'कहाँ से पिकअप करना है?\nखोजने के लिए जगह का नाम टाइप करें:',
   selectPickup: 'पिकअप जगह चुनें:',
+  searchAgain: '🔍 फिर से खोजें',
   pickup: (place: string) => `पिकअप: ${place}`,
   whereTo: 'कहाँ जाना है?\nखोजने के लिए जगह का नाम टाइप करें:',
   whereToWithSaved: 'कहाँ जाना है?\n\nकोई जगह चुनें या जगह का नाम टाइप करें:',

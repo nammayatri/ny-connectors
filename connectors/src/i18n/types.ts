@@ -51,6 +51,7 @@ export interface LanguageStrings {
   pickSavedOrType: string;
   typePickupPlace: string;
   selectPickup: string;
+  searchAgain: string;
   pickup: (place: string) => string;
   whereTo: string;
   whereToWithSaved: string;

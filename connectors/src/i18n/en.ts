@@ -50,6 +50,7 @@ export const en: LanguageStrings = {
   pickSavedOrType: 'Pick a saved location or type a place name:',
   typePickupPlace: 'Where are you picking up from?\nType a place name to search:',
   selectPickup: 'Select pickup location:',
+  searchAgain: '🔍 Search again',
   pickup: (place: string) => `Pickup: ${place}`,
   whereTo: 'Where to?\nType a place name to search:',
   typeDropPlace: 'Where to?\nType a place name to search:',
