@@ -308,10 +308,7 @@ export class FlowEngine {
           await this.handleAwaitingContact(ctx, message, reply, replyWithButtons, connector!);
           break;
         case 'AWAITING_PHONE':
-          await this.handleAwaitingPhone(ctx, input, message, reply);
-          break;
-        case 'AWAITING_ACCESS_CODE':
-          await this.handleAwaitingAccessCode(ctx, input, message, reply, replyWithButtons);
+          await this.handleAwaitingPhone(ctx, input, message, reply, replyWithButtons);
           break;
         case 'AWAITING_ORIGIN':
           await this.handleAwaitingOrigin(ctx, input, message, reply, replyWithButtons);
@@ -413,6 +410,55 @@ export class FlowEngine {
         return;
       }
 
+      // Auto-extract phone number from channel when possible
+      const autoPhone = this.extractPhoneFromChannel(msg);
+      if (autoPhone) {
+        ctx.phone = autoPhone;
+        try {
+          const { token, personId: authPersonId } = await NammaYatriClient.authenticate(autoPhone);
+          ctx.nyToken = token;
+
+          const client = new NammaYatriClient(token);
+          try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
+
+          let personId = authPersonId;
+          if (!personId) {
+            personId = await client.getPersonId().catch(() => '');
+          }
+          ctx.personId = personId;
+          console.log(`[flow] Auto-auth via ${msg.source} phone=${autoPhone} personId=${personId}`);
+
+          const userKey = `${msg.source}:${msg.senderId}`;
+          this.tokenStore.set(userKey, {
+            nyToken: token,
+            personId,
+            phone: autoPhone,
+            savedLocations: ctx.savedLocations,
+            authenticatedAt: new Date().toISOString(),
+            language: ctx.language,
+          });
+
+          await reply(s.allSet);
+          await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+        } catch (err: any) {
+          await reply(s.setupFailed(err.message));
+          ctx.state = 'IDLE';
+          await this.saveContext(msg, ctx);
+        }
+        return;
+      }
+
+      // Telegram: use contact sharing button instead of typing
+      if (msg.source === 'telegram' && connector instanceof TelegramConnector) {
+        ctx.state = 'AWAITING_CONTACT';
+        await this.saveContext(msg, ctx);
+        await connector.requestContact(
+          this.getReplyTarget(msg, connector),
+          s.sharePhonePrompt
+        );
+        return;
+      }
+
       ctx.state = 'AWAITING_PHONE';
       await this.saveContext(msg, ctx);
       await reply(s.enterPhone);
@@ -490,7 +536,7 @@ export class FlowEngine {
     }
 
     try {
-      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(phone, config.nyAppSecret);
+      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(phone);
       ctx.nyToken = token;
       ctx.phone = phone;
 
@@ -532,7 +578,11 @@ export class FlowEngine {
     }
   }
 
-  private async handleAwaitingPhone(ctx: FlowContext, input: string, msg: CommandMessage, reply: (txt: string) => Promise<void>) {
+  private async handleAwaitingPhone(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
     const s = t(ctx.language);
     let phone = input.replace(/[^0-9]/g, '');
     if (phone.length > 10 && phone.startsWith('91')) {
@@ -543,28 +593,14 @@ export class FlowEngine {
       return;
     }
     ctx.phone = phone;
-    ctx.state = 'AWAITING_ACCESS_CODE';
-    await this.saveContext(msg, ctx);
-    await reply(s.enterAccessCode);
-  }
 
-  private async handleAwaitingAccessCode(
-    ctx: FlowContext, input: string, msg: CommandMessage,
-    reply: (txt: string) => Promise<void>,
-    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
-  ) {
-    const s = t(ctx.language);
-    const code = input.trim();
     try {
-      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(ctx.phone!, code);
+      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(phone);
       ctx.nyToken = token;
 
       const client = new NammaYatriClient(token);
-      try {
-        ctx.savedLocations = await client.getSavedLocations();
-      } catch { /* ignore */ }
+      try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
 
-      // Resolve personId — try auth response first, fall back to profile API
       let personId = authPersonId;
       if (!personId) {
         personId = await client.getPersonId().catch(() => '');
@@ -572,12 +608,11 @@ export class FlowEngine {
       ctx.personId = personId;
       console.log(`[flow] Resolved personId=${personId}`);
 
-      // Persist token for future sessions
       const userKey = `${msg.source}:${msg.senderId}`;
       this.tokenStore.set(userKey, {
         nyToken: token,
         personId,
-        phone: ctx.phone!,
+        phone,
         savedLocations: ctx.savedLocations,
         authenticatedAt: new Date().toISOString(),
         language: ctx.language,
@@ -791,6 +826,7 @@ export class FlowEngine {
       const { title, description } = this.splitPlaceDescription(p.description);
       return [{ text: title, data: `pick_origin:${i}`, description }];
     });
+    buttons.push([{ text: s.searchAgain, data: 'search_origin_again', description: '' }]);
     await replyWithButtons(s.selectPickup, buttons);
   }
 
@@ -800,6 +836,16 @@ export class FlowEngine {
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
+
+    // "Search again" — go back to origin input
+    if (input === 'search_origin_again') {
+      ctx.state = 'AWAITING_ORIGIN';
+      ctx.originOptions = undefined;
+      await this.saveContext(msg, ctx);
+      await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+      return;
+    }
+
     // Handle button callback
     const btnMatch = input.match(/^pick_origin:(\d+)$/);
     const idx = btnMatch ? parseInt(btnMatch[1]) : parseInt(input) - 1;
@@ -907,6 +953,7 @@ export class FlowEngine {
       const { title, description } = this.splitPlaceDescription(p.description);
       return [{ text: title, data: `pick_dest:${i}`, description }];
     });
+    buttons.push([{ text: s.searchAgain, data: 'search_dest_again', description: '' }]);
     await replyWithButtons(s.selectDrop, buttons);
   }
 
@@ -916,6 +963,16 @@ export class FlowEngine {
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
     const s = t(ctx.language);
+
+    // "Search again" — go back to destination input
+    if (input === 'search_dest_again') {
+      ctx.state = 'AWAITING_DESTINATION';
+      ctx.destinationOptions = undefined;
+      await this.saveContext(msg, ctx);
+      await this.promptForDestination(ctx, msg, reply, replyWithButtons);
+      return;
+    }
+
     const btnMatch = input.match(/^pick_dest:(\d+)$/);
     const idx = btnMatch ? parseInt(btnMatch[1]) : parseInt(input) - 1;
 
@@ -1178,7 +1235,7 @@ export class FlowEngine {
       await sleep(POLL_INTERVAL);
 
       const freshCtx = await this.getContext(msg);
-      if (freshCtx.cancelRequested) {
+      if (freshCtx.cancelRequested || freshCtx.state === 'IDLE') {
         console.log('[flow] Cancel detected during polling, aborting');
         return;
       }
