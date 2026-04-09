@@ -5,7 +5,7 @@ export const hi: LanguageStrings = {
   nativeLanguageName: 'हिन्दी',
 
   // Welcome & menu
-  welcomeMessage: "👋 नमस्ते! मैं आपका नम्मा यात्री राइड सहायक हूँ।\n\nआप क्या करना चाहेंगे?",
+  welcomeMessage: "👋 नमस्ते! मैं आपका राइड बुकिंग सहायक हूँ।\n\nआप क्या करना चाहेंगे?",
   welcomeBack: '👋 वापस स्वागत है! आप क्या करना चाहेंगे?',
   bookARide: '🚕 राइड बुक करें',
   trackRide: '📍 राइड ट्रैक करें',

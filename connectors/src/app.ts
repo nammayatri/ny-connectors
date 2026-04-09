@@ -1,13 +1,14 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { TelegramConnector, WhatsAppConnector, SlackConnector } from './connectors';
 import { Connector } from './connectors/types';
-import { createSessionManager } from './session';
+import { createSessionManager, createTokenStore } from './session';
 import { FlowEngine } from './flow';
 import { config } from './config';
 
 const app = express();
 const sessionManager = createSessionManager();
-const flowEngine = new FlowEngine(sessionManager as any);
+const tokenStore = createTokenStore();
+const flowEngine = new FlowEngine(sessionManager as any, tokenStore);
 
 // Capture raw body for signature verification
 app.use(express.json({
@@ -96,6 +97,7 @@ app.post('/webhook/slack/interactions', express.urlencoded({
 
 const shutdown = async () => {
   await sessionManager.disconnect();
+  await tokenStore.disconnect();
 };
 
 export { app, shutdown };

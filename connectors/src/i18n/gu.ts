@@ -5,7 +5,7 @@ export const gu: LanguageStrings = {
   nativeLanguageName: 'ગુજરાતી',
 
   // Welcome & menu
-  welcomeMessage: "👋 સ્વાગત છે! હું તમારો નમ્મા યાત્રી રાઈડ સહાયક છું.\n\nતમે શું કરવા માગો છો?",
+  welcomeMessage: "👋 સ્વાગત છે! હું તમારો રાઈડ બુકિંગ સહાયક છું.\n\nતમે શું કરવા માગો છો?",
   welcomeBack: '👋 ફરી સ્વાગત છે! તમે શું કરવા માગો છો?',
   bookARide: '🚕 રાઈડ બુક કરો',
   trackRide: '📍 રાઈડ ટ્રેક કરો',

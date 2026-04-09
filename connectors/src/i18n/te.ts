@@ -5,7 +5,7 @@ export const te: LanguageStrings = {
   nativeLanguageName: 'తెలుగు',
 
   // Welcome & menu
-  welcomeMessage: "👋 స్వాగతం! నేను మీ నమ్మ యాత్రి రైడ్ సహాయకుడిని.\n\nమీరు ఏమి చేయాలనుకుంటున్నారు?",
+  welcomeMessage: "👋 స్వాగతం! నేను మీ రైడ్ బుకింగ్ సహాయకుడిని.\n\nమీరు ఏమి చేయాలనుకుంటున్నారు?",
   welcomeBack: '👋 తిరిగి స్వాగతం! మీరు ఏమి చేయాలనుకుంటున్నారు?',
   bookARide: '🚕 రైడ్ బుక్ చేయండి',
   trackRide: '📍 రైడ్ ట్రాక్ చేయండి',

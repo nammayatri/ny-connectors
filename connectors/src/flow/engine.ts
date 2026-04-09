@@ -3,6 +3,7 @@ import { NammaYatriClient, NYPlaceDetails, NYRideHistoryItem } from '../ny';
 import { SessionManager } from '../session/manager';
 import { MemorySessionManager } from '../session/memory-store';
 import { TokenStore } from '../session/token-store';
+import { createTokenStore } from '../session';
 import { Connector, CommandMessage } from '../connectors/types';
 import { TelegramConnector } from '../connectors/telegram';
 import { WhatsAppConnector } from '../connectors/whatsapp';
@@ -25,9 +26,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 export class FlowEngine {
-  private tokenStore = new TokenStore();
+  private tokenStore: TokenStore;
 
-  constructor(private sessionManager: AnySessionManager) {}
+  constructor(private sessionManager: AnySessionManager, tokenStore?: TokenStore) {
+    this.tokenStore = tokenStore ?? createTokenStore();
+  }
 
   async handleMessage(message: CommandMessage, connector: Connector): Promise<void> {
     const chatId = this.getReplyTarget(message, connector);
@@ -67,7 +70,7 @@ export class FlowEngine {
     // Hydrate token and language from persistent store if not already in session
     const userKey = `${message.source}:${message.senderId}`;
     if (!ctx.nyToken) {
-      const stored = this.tokenStore.get(userKey);
+      const stored = await this.tokenStore.get(userKey);
       if (stored) {
         ctx.nyToken = stored.nyToken;
         ctx.savedLocations = stored.savedLocations;
@@ -75,7 +78,7 @@ export class FlowEngine {
       }
     }
     if (!ctx.language) {
-      const storedLang = this.tokenStore.getLanguage(userKey);
+      const storedLang = await this.tokenStore.getLanguage(userKey);
       if (storedLang) ctx.language = storedLang;
     }
     const s = t(ctx.language);
@@ -89,7 +92,7 @@ export class FlowEngine {
           ctx.language = langCode;
           ctx.state = 'IDLE';
           await this.saveContext(message, ctx);
-          this.tokenStore.updateLanguage(userKey, langCode);
+          await this.tokenStore.updateLanguage(userKey, langCode);
           const newS = t(langCode);
           await replyWithButtons(
             newS.languageUpdated(newS.nativeLanguageName) + newS.whatToDo,
@@ -358,7 +361,7 @@ export class FlowEngine {
       if (err.message?.includes('401')) {
         ctx.nyToken = undefined;
         ctx.state = 'IDLE';
-        this.tokenStore.delete(userKey);
+        await this.tokenStore.delete(userKey);
         await this.saveContext(message, ctx);
         await reply(s.sessionExpired);
       } else {
@@ -397,14 +400,14 @@ export class FlowEngine {
     if (!ctx.nyToken) {
       // Check persistent token store
       const userKey = `${msg.source}:${msg.senderId}`;
-      const stored = this.tokenStore.get(userKey);
+      const stored = await this.tokenStore.get(userKey);
       if (stored) {
         ctx.nyToken = stored.nyToken;
         ctx.savedLocations = stored.savedLocations;
         const client = new NammaYatriClient(ctx.nyToken);
         try {
           ctx.savedLocations = await client.getSavedLocations();
-          this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+          await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
         } catch {}
         await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
         return;
@@ -429,7 +432,7 @@ export class FlowEngine {
           console.log(`[flow] Auto-auth via ${msg.source} phone=${autoPhone} personId=${personId}`);
 
           const userKey = `${msg.source}:${msg.senderId}`;
-          this.tokenStore.set(userKey, {
+          await this.tokenStore.set(userKey, {
             nyToken: token,
             personId,
             phone: autoPhone,
@@ -552,7 +555,7 @@ export class FlowEngine {
       console.log(`[flow] Resolved personId=${personId}`);
 
       const userKey = `${msg.source}:${msg.senderId}`;
-      this.tokenStore.set(userKey, {
+      await this.tokenStore.set(userKey, {
         nyToken: token,
         personId,
         phone,
@@ -609,7 +612,7 @@ export class FlowEngine {
       console.log(`[flow] Resolved personId=${personId}`);
 
       const userKey = `${msg.source}:${msg.senderId}`;
-      this.tokenStore.set(userKey, {
+      await this.tokenStore.set(userKey, {
         nyToken: token,
         personId,
         phone,
@@ -811,8 +814,8 @@ export class FlowEngine {
       return;
     }
 
-    // Search places via autocomplete
-    const places = await client.searchPlaces(searchTerm);
+    // Search places via autocomplete — center on best-known location
+    const places = await client.searchPlaces(searchTerm, this.searchCenterFor(ctx, 'origin'));
     if (!places.length) {
       await reply(s.noPlacesFound);
       return;
@@ -938,8 +941,8 @@ export class FlowEngine {
       return;
     }
 
-    // Search places via autocomplete
-    const places = await client.searchPlaces(searchTerm);
+    // Search places via autocomplete — center on confirmed origin (or best-known fallback)
+    const places = await client.searchPlaces(searchTerm, this.searchCenterFor(ctx, 'destination'));
     if (!places.length) {
       await reply(s.noPlacesFound);
       return;
@@ -1007,7 +1010,7 @@ export class FlowEngine {
         await client.saveLocation(tag, details);
         ctx.savedLocations = await client.getSavedLocations().catch(() => ctx.savedLocations);
         const userKey = `${msg.source}:${msg.senderId}`;
-        this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+        await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
       } catch { /* fall through */ }
       ctx.addingLocationTag = undefined;
       ctx.addLocationOptions = undefined;
@@ -1016,8 +1019,8 @@ export class FlowEngine {
       return;
     }
 
-    // Autocomplete search
-    const places = await client.searchPlaces(input);
+    // Autocomplete search — center on best-known location
+    const places = await client.searchPlaces(input, this.searchCenterFor(ctx, 'origin'));
     if (!places.length) {
       await reply(s.noPlacesFound);
       return;
@@ -1059,7 +1062,7 @@ export class FlowEngine {
       // Refresh saved locations from API
       ctx.savedLocations = await client.getSavedLocations().catch(() => ctx.savedLocations);
       const userKey = `${msg.source}:${msg.senderId}`;
-      this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+      await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
       await reply(s.locationSaved(tag));
     } catch (err: any) {
       console.error(`[flow] saveLocation failed: ${err.message}`);
@@ -1661,5 +1664,23 @@ export class FlowEngine {
       phone = phone.substring(2);
     }
     return phone.length === 10 ? phone : null;
+  }
+
+  // Picks the best-known coordinate to use as the autocomplete search center.
+  // For destination search the confirmed origin is the strongest hint; for
+  // origin/add-location we fall back to the user's saved locations. Returning
+  // undefined lets the client use its default city.
+  private searchCenterFor(
+    ctx: FlowContext,
+    kind: 'origin' | 'destination',
+  ): { lat: number; lon: number } | undefined {
+    if (kind === 'destination' && ctx.origin?.lat != null && ctx.origin?.lon != null) {
+      return { lat: ctx.origin.lat, lon: ctx.origin.lon };
+    }
+    const saved = ctx.savedLocations?.find(
+      (l) => typeof l.lat === 'number' && typeof l.lon === 'number',
+    );
+    if (saved) return { lat: saved.lat, lon: saved.lon };
+    return undefined;
   }
 }
