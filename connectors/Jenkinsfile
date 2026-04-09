@@ -1,5 +1,9 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            label 'dind-agent'
+        }
+    }
 
     parameters {
         string(name: 'BUILD_TAG', description: 'Docker image tag (e.g. first 6 chars of commit SHA)')
