@@ -1,0 +1,49 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'BUILD_TAG', description: 'Docker image tag (e.g. first 6 chars of commit SHA)')
+    }
+
+    environment {
+        ECR_REPO   = '147728078333.dkr.ecr.ap-south-1.amazonaws.com/ny-connectors'
+        AWS_REGION = 'ap-south-1'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('ECR Login') {
+            steps {
+                sh '''
+                    aws ecr get-login-password --region $AWS_REGION \
+                      | docker login --username AWS --password-stdin $ECR_REPO
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                dir('connectors') {
+                    sh "docker build -t ${ECR_REPO}:${params.BUILD_TAG} ."
+                }
+            }
+        }
+
+        stage('Push') {
+            steps {
+                sh "docker push ${ECR_REPO}:${params.BUILD_TAG}"
+            }
+        }
+    }
+
+    post {
+        always {
+            sh "docker rmi ${ECR_REPO}:${params.BUILD_TAG} || true"
+        }
+    }
+}
