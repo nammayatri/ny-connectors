@@ -1,7 +1,7 @@
-import Redis from 'ioredis';
 import crypto from 'crypto';
 import { config } from '../config';
 import { MessageSource } from '../connectors/types';
+import { createRedisClient, RedisClient } from './redis-client';
 
 export interface Session {
   sessionId: string;
@@ -16,11 +16,11 @@ export interface Session {
 const SESSION_PREFIX = 'session:';
 
 export class SessionManager {
-  private redis: Redis;
+  private redis: RedisClient;
 
   constructor() {
-    this.redis = new Redis(config.redisUrl);
-    this.redis.on('error', (err) => {
+    this.redis = createRedisClient();
+    this.redis.on('error', (err: Error) => {
       console.error('[session] Redis error:', err.message);
     });
   }

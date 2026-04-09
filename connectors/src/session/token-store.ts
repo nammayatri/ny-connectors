@@ -1,8 +1,7 @@
-import fs from 'fs';
-import path from 'path';
 import { SupportedLanguage } from '../i18n';
+import { createRedisClient, RedisClient } from './redis-client';
 
-interface UserAuth {
+export interface UserAuth {
   nyToken: string;
   personId?: string;
   phone: string;
@@ -11,63 +10,98 @@ interface UserAuth {
   language?: SupportedLanguage;
 }
 
-const TOKEN_FILE = path.join(process.env.TOKEN_STORE_PATH || '.', 'user-tokens.json');
+export interface TokenStore {
+  get(userId: string): Promise<UserAuth | null>;
+  set(userId: string, auth: UserAuth): Promise<void>;
+  updateLocations(userId: string, locations: any[]): Promise<void>;
+  updateLanguage(userId: string, language: SupportedLanguage): Promise<void>;
+  getLanguage(userId: string): Promise<SupportedLanguage | undefined>;
+  delete(userId: string): Promise<void>;
+  disconnect(): Promise<void>;
+}
 
-export class TokenStore {
-  private tokens: Record<string, UserAuth> = {};
+const TOKEN_PREFIX = 'usertoken:';
+
+export class RedisTokenStore implements TokenStore {
+  private redis: RedisClient;
 
   constructor() {
-    this.load();
+    this.redis = createRedisClient();
+    this.redis.on('error', (err: Error) => {
+      console.error('[token-store] Redis error:', err.message);
+    });
   }
 
-  get(userId: string): UserAuth | null {
-    return this.tokens[userId] || null;
+  async get(userId: string): Promise<UserAuth | null> {
+    const data = await this.redis.get(`${TOKEN_PREFIX}${userId}`);
+    return data ? (JSON.parse(data) as UserAuth) : null;
   }
 
-  set(userId: string, auth: UserAuth): void {
-    this.tokens[userId] = auth;
-    this.save();
+  async set(userId: string, auth: UserAuth): Promise<void> {
+    await this.redis.set(`${TOKEN_PREFIX}${userId}`, JSON.stringify(auth));
   }
 
-  updateLocations(userId: string, locations: any[]): void {
-    if (this.tokens[userId]) {
-      this.tokens[userId].savedLocations = locations;
-      this.save();
-    }
+  async updateLocations(userId: string, locations: any[]): Promise<void> {
+    const existing = await this.get(userId);
+    if (!existing) return;
+    existing.savedLocations = locations;
+    await this.set(userId, existing);
   }
 
-  updateLanguage(userId: string, language: SupportedLanguage): void {
-    if (this.tokens[userId]) {
-      this.tokens[userId].language = language;
-      this.save();
-    }
+  async updateLanguage(userId: string, language: SupportedLanguage): Promise<void> {
+    const existing = await this.get(userId);
+    if (!existing) return;
+    existing.language = language;
+    await this.set(userId, existing);
   }
 
-  getLanguage(userId: string): SupportedLanguage | undefined {
-    return this.tokens[userId]?.language;
+  async getLanguage(userId: string): Promise<SupportedLanguage | undefined> {
+    const existing = await this.get(userId);
+    return existing?.language;
   }
 
-  delete(userId: string): void {
-    delete this.tokens[userId];
-    this.save();
+  async delete(userId: string): Promise<void> {
+    await this.redis.del(`${TOKEN_PREFIX}${userId}`);
   }
 
-  private load(): void {
-    try {
-      if (fs.existsSync(TOKEN_FILE)) {
-        this.tokens = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf-8'));
-        console.log(`[token-store] Loaded ${Object.keys(this.tokens).length} user tokens`);
-      }
-    } catch (err: any) {
-      console.error('[token-store] Failed to load:', err.message);
-    }
+  async disconnect(): Promise<void> {
+    await this.redis.quit();
+  }
+}
+
+// In-memory fallback for dev/no-redis environments. Not persisted across restarts.
+export class MemoryTokenStore implements TokenStore {
+  private tokens = new Map<string, UserAuth>();
+
+  async get(userId: string): Promise<UserAuth | null> {
+    return this.tokens.get(userId) || null;
   }
 
-  private save(): void {
-    try {
-      fs.writeFileSync(TOKEN_FILE, JSON.stringify(this.tokens, null, 2));
-    } catch (err: any) {
-      console.error('[token-store] Failed to save:', err.message);
-    }
+  async set(userId: string, auth: UserAuth): Promise<void> {
+    this.tokens.set(userId, auth);
+  }
+
+  async updateLocations(userId: string, locations: any[]): Promise<void> {
+    const existing = this.tokens.get(userId);
+    if (!existing) return;
+    existing.savedLocations = locations;
+  }
+
+  async updateLanguage(userId: string, language: SupportedLanguage): Promise<void> {
+    const existing = this.tokens.get(userId);
+    if (!existing) return;
+    existing.language = language;
+  }
+
+  async getLanguage(userId: string): Promise<SupportedLanguage | undefined> {
+    return this.tokens.get(userId)?.language;
+  }
+
+  async delete(userId: string): Promise<void> {
+    this.tokens.delete(userId);
+  }
+
+  async disconnect(): Promise<void> {
+    this.tokens.clear();
   }
 }

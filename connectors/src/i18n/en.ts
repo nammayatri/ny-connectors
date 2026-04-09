@@ -5,7 +5,7 @@ export const en: LanguageStrings = {
   nativeLanguageName: 'English',
 
   // Welcome & menu
-  welcomeMessage: "👋 Welcome! I'm your Namma Yatri ride assistant.\n\nWhat would you like to do?",
+  welcomeMessage: "👋 Welcome! I'm your ride booking assistant.\n\nWhat would you like to do?",
   welcomeBack: '👋 Welcome back! What would you like to do?',
   bookARide: '🚕 Book a Ride',
   trackRide: '📍 Track Ride',

@@ -1,4 +1,83 @@
 import { config } from '../config';
+import {
+  CITY_SEARCH_RADIUS_METERS,
+  DEFAULT_CITY,
+  findNearestCity,
+} from './cities';
+
+// ---------------------------------------------------------------------------
+// Logged fetch wrapper
+// ---------------------------------------------------------------------------
+// Every Namma Yatri API call goes through `loggedFetch` so we get a uniform
+// log of URL, method, request headers (with sensitive values redacted),
+// request body, status, response body and elapsed time. The returned object
+// is shape-compatible with the subset of the Fetch Response interface that
+// existing call sites use (`ok`, `status`, `text()`, `json()`).
+// ---------------------------------------------------------------------------
+
+const SENSITIVE_HEADER_KEYS = new Set(['token', 'authorization', 'cookie']);
+
+function sanitizeHeaders(headers: any): Record<string, string> {
+  if (!headers) return {};
+  const entries: [string, string][] = Array.isArray(headers)
+    ? (headers as [string, string][])
+    : Object.entries(headers as Record<string, string>);
+  const out: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    if (SENSITIVE_HEADER_KEYS.has(key.toLowerCase()) && typeof value === 'string') {
+      out[key] = value.length > 8
+        ? `${value.substring(0, 8)}…(len=${value.length})`
+        : '<redacted>';
+    } else {
+      out[key] = String(value);
+    }
+  }
+  return out;
+}
+
+interface LoggedResponse {
+  ok: boolean;
+  status: number;
+  text: () => Promise<string>;
+  json: <T = any>() => Promise<T>;
+}
+
+async function loggedFetch(url: string, init: RequestInit = {}): Promise<LoggedResponse> {
+  const method = init.method || 'GET';
+  const headers = sanitizeHeaders(init.headers);
+  const reqBody = typeof init.body === 'string'
+    ? init.body
+    : init.body
+      ? '<binary>'
+      : undefined;
+
+  console.log(`[ny-api] → ${method} ${url}`);
+  console.log(`[ny-api]   request headers: ${JSON.stringify(headers)}`);
+  if (reqBody !== undefined) {
+    console.log(`[ny-api]   request body: ${reqBody}`);
+  }
+
+  const started = Date.now();
+  let res: Response;
+  try {
+    res = await globalThis.fetch(url, init);
+  } catch (err: any) {
+    console.error(`[ny-api] ✗ ${method} ${url} — network error: ${err.message}`);
+    throw err;
+  }
+  const text = await res.text().catch(() => '');
+  const elapsed = Date.now() - started;
+
+  console.log(`[ny-api] ← ${res.status} ${method} ${url} (${elapsed}ms)`);
+  console.log(`[ny-api]   response body: ${text}`);
+
+  return {
+    ok: res.ok,
+    status: res.status,
+    text: async () => text,
+    json: async <T = any>() => JSON.parse(text) as T,
+  };
+}
 
 export interface NYPlace {
   description: string;
@@ -65,7 +144,7 @@ export class NammaYatriClient {
       mobileCountryCode: '+91',
     });
     const authBase = config.nyAuthUrl.replace(/\/v2\/?$/, '');
-    const res = await fetch(`${authBase}/internal/auth/getToken?${params}`, {
+    const res = await loggedFetch(`${authBase}/internal/auth/getToken?${params}`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json', token: config.nyPreAuthToken },
     });
@@ -76,15 +155,14 @@ export class NammaYatriClient {
     }
 
     const data = await res.json() as any;
-    console.log(`[auth] full response: ${JSON.stringify(data).substring(0, 600)}`);
     const personId = data.personId || '';
-    console.log(`[auth] personId=${personId} token=${data.token?.substring(0, 10)}...`);
+    console.log(`[auth] personId=${personId}`);
     return { token: data.token, personId, person: data };
   }
 
   async getPersonId(): Promise<string> {
     const url = `${config.nyBaseUrl}/profile`;
-    const res = await fetch(url, {
+    const res = await loggedFetch(url, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
     if (!res.ok) {
@@ -92,12 +170,11 @@ export class NammaYatriClient {
       return '';
     }
     const data = await res.json() as any;
-    console.log(`[auth] profile response: ${JSON.stringify(data).substring(0, 400)}`);
     return data.id || data.personId || data.customerId || data.userId || '';
   }
 
   async saveLocation(tag: string, details: NYPlaceDetails): Promise<void> {
-    const res = await fetch(`${config.nyBaseUrl}/savedLocation`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/savedLocation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({
@@ -127,7 +204,7 @@ export class NammaYatriClient {
   }
 
   async getSavedLocations(): Promise<NYSavedLocation[]> {
-    const res = await fetch(`${config.nyBaseUrl}/savedLocation/list`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/savedLocation/list`, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
     if (!res.ok) throw new Error(`Failed to get saved locations: ${res.status}`);
@@ -135,17 +212,24 @@ export class NammaYatriClient {
     return data.list || [];
   }
 
-  async searchPlaces(searchText: string): Promise<NYPlace[]> {
-    const res = await fetch(`${config.nyBaseUrl}/maps/autoComplete`, {
+  async searchPlaces(
+    searchText: string,
+    near?: { lat: number; lon: number },
+  ): Promise<NYPlace[]> {
+    const city = near
+      ? findNearestCity(near.lat, near.lon)
+      : DEFAULT_CITY;
+    const radius = CITY_SEARCH_RADIUS_METERS;
+    const res = await loggedFetch(`${config.nyBaseUrl}/maps/autoComplete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({
         autoCompleteType: 'DROP',
         input: searchText,
         language: 'ENGLISH',
-        location: '12.97413032560963,77.58534937018615',
-        radius: 50000,
-        radiusWithUnit: { unit: 'Meter', value: 50000.0 },
+        location: `${city.lat},${city.lon}`,
+        radius,
+        radiusWithUnit: { unit: 'Meter', value: radius },
         strictbounds: false,
       }),
     });
@@ -159,7 +243,7 @@ export class NammaYatriClient {
   }
 
   async getPlaceDetails(placeId: string): Promise<NYPlaceDetails> {
-    const res = await fetch(`${config.nyBaseUrl}/maps/getPlaceName`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/maps/getPlaceName`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({
@@ -194,7 +278,7 @@ export class NammaYatriClient {
   }
 
   async reverseGeocode(lat: number, lon: number): Promise<NYPlaceDetails> {
-    const res = await fetch(`${config.nyBaseUrl}/maps/getPlaceName`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/maps/getPlaceName`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({
@@ -255,26 +339,25 @@ export class NammaYatriClient {
         },
         placeNameSource: 'API_MCP',
         platformType: 'APPLICATION',
+        quotesUnifiedFlow: true,
       },
       fareProductType: 'ONE_WAY',
     };
-    console.log(`[rideSearch] request: ${JSON.stringify(body).substring(0, 800)}`);
-    const res = await fetch(`${config.nyBaseUrl}/rideSearch`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/rideSearch`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', token: this.token },
+      headers: { 'Content-Type': 'application/json', 'is-dashboard-request': 'False', token: this.token },
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      console.error(`[rideSearch] failed ${res.status}: ${errBody.substring(0, 500)}`);
       throw new Error(`Ride search failed: ${res.status}`);
     }
     const data = await res.json() as any;
+    console.log(`[rideSearch] searchId=${data.searchId}`);
     return data.searchId;
   }
 
   async getEstimates(searchId: string): Promise<NYEstimate[]> {
-    const res = await fetch(`${config.nyBaseUrl}/rideSearch/${searchId}/results`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/rideSearch/${searchId}/results`, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
     if (!res.ok) {
@@ -297,7 +380,7 @@ export class NammaYatriClient {
   }
 
   async selectEstimate(estimateId: string): Promise<void> {
-    const res = await fetch(`${config.nyBaseUrl}/estimate/${estimateId}/select2`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/estimate/${estimateId}/select2`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({
@@ -318,7 +401,7 @@ export class NammaYatriClient {
    */
   async pollSelectResult(personId: string, estimateId: string): Promise<{ bookingId: string | null; raw: any }> {
     const url = `${config.nyBaseUrl}/rideBooking/select/${personId}/${estimateId}/result`;
-    const res = await fetch(url, {
+    const res = await loggedFetch(url, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
     if (!res.ok) {
@@ -327,7 +410,6 @@ export class NammaYatriClient {
       return { bookingId: null, raw: null };
     }
     const data = await res.json() as any;
-    console.log(`[booking] selectResult: ${JSON.stringify(data).substring(0, 400)}`);
     const bookingId = data.bookingId || data.id || null;
     return { bookingId, raw: data };
   }
@@ -338,7 +420,7 @@ export class NammaYatriClient {
    */
   async getBookingDetails(bookingId: string): Promise<any> {
     const url = `${config.nyBaseUrl}/rideBooking/${bookingId}`;
-    const res = await fetch(url, {
+    const res = await loggedFetch(url, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
     if (!res.ok) {
@@ -347,12 +429,11 @@ export class NammaYatriClient {
       return actives.find((b: any) => b.id === bookingId) || actives[0] || null;
     }
     const data = await res.json() as any;
-    console.log(`[booking] bookingDetails: ${JSON.stringify(data).substring(0, 600)}`);
     return data.contents ?? data;
   }
 
   async cancelSearch(estimateId: string): Promise<void> {
-    const res = await fetch(`${config.nyBaseUrl}/estimate/${estimateId}/cancelSearch`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/estimate/${estimateId}/cancelSearch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({}),
@@ -361,7 +442,7 @@ export class NammaYatriClient {
   }
 
   async triggerSOS(rideId: string, customerLat?: number, customerLon?: number): Promise<string> {
-    const res = await fetch(`${config.nyBaseUrl}/sos/create`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/sos/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({
@@ -387,7 +468,7 @@ export class NammaYatriClient {
   }
 
   async markRideAsSafe(sosId: string): Promise<void> {
-    const res = await fetch(`${config.nyBaseUrl}/sos/markRideAsSafe/${sosId}`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/sos/markRideAsSafe/${sosId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({
@@ -415,7 +496,7 @@ export class NammaYatriClient {
       source: 'ByUser',
     };
     console.log(`[cancel] cancelRide bookingId=${bookingId} status=${bookingStatus} body=${JSON.stringify(body)}`);
-    const res = await fetch(`${config.nyBaseUrl}/rideBooking/${bookingId}/cancel`, {
+    const res = await loggedFetch(`${config.nyBaseUrl}/rideBooking/${bookingId}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify(body),
@@ -434,7 +515,7 @@ export class NammaYatriClient {
     const params = `limit=10&${statusQuery}`;
 
     const url = `${config.nyBaseUrl}/rideBooking/listV2?${params}`;
-    const res = await fetch(url, {
+    const res = await loggedFetch(url, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
     if (!res.ok) {
@@ -474,8 +555,7 @@ export class NammaYatriClient {
       clientId: 'ACP_SERVER',
     });
     const url = `${config.nyBaseUrl}/rideBooking/listV2?${params}`;
-    console.log(`[history] GET ${url}`);
-    const res = await fetch(url, {
+    const res = await loggedFetch(url, {
       headers: { 'Content-Type': 'application/json', token: this.token },
     });
     if (!res.ok) {
