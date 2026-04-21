@@ -19,6 +19,7 @@ export interface Config {
   nyPreAuthToken: string;
   telegramSecretToken: string;
   nyAppSecret: string;
+  nyMerchantId: string;
 }
 
 // Parses REDIS_CLUSTER_NODES env var: comma-separated host:port pairs.
@@ -65,4 +66,5 @@ export const config: Config = {
   nyPreAuthToken: process.env.NY_PRE_AUTH_TOKEN || '',
   telegramSecretToken: process.env.TELEGRAM_SECRET_TOKEN || '',
   nyAppSecret: process.env.NY_APP_SECRET || '',
+  nyMerchantId: process.env.NY_MERCHANT_ID || '',
 };

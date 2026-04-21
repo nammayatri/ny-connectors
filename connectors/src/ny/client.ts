@@ -142,6 +142,7 @@ export class NammaYatriClient {
     const params = new URLSearchParams({
       mobileNumber,
       mobileCountryCode: '+91',
+      merchantId: config.nyMerchantId,
     });
     const authBase = config.nyAuthUrl.replace(/\/v2\/?$/, '');
     const res = await loggedFetch(`${authBase}/internal/auth/getToken?${params}`, {
