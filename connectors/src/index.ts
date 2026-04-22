@@ -8,6 +8,9 @@ const server = app.listen(config.port, () => {
   console.log(`[gateway] Redis: ${config.redisUrl}`);
   console.log(`[gateway] Session TTL: ${config.sessionTtlSeconds}s`);
   console.log(`[gateway] Connectors: telegram, whatsapp, slack`);
+  console.log(`[gateway] Dashboard token: ${config.nyDashboardToken ? `set (len=${config.nyDashboardToken.length})` : 'NOT SET'}`);
+  console.log(`[gateway] Dashboard URL: ${config.nyDashboardUrl}`);
+  console.log(`[gateway] City: ${config.nyCity}`);
 });
 
 const gracefulShutdown = async (signal: string) => {

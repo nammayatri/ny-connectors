@@ -29,6 +29,21 @@ export const en: LanguageStrings = {
   couldNotReadPhone: 'Could not read your phone number. Please try again.',
   allSet: "You're all set! Let's book a ride.",
 
+  // Registration (OTP-based)
+  personNotFound: "Looks like you're new! Let's get you set up.",
+  otpSent: 'An OTP has been sent to your phone. Please enter the OTP:',
+  enterOtp: 'Enter the OTP sent to your phone:',
+  invalidOtp: 'That doesn\'t look like a valid OTP. Please enter the 4 or 6 digit code:',
+  resendOtp: '🔄 Resend OTP',
+  otpResent: 'OTP has been resent. Please check your phone:',
+  otpResendFailed: (err: string) => `Could not resend OTP: ${err}`,
+  otpVerified: 'Phone verified successfully!',
+  otpVerifyFailed: (err: string) => `OTP verification failed: ${err}\nPlease try again:`,
+  askName: "What's your name? This helps drivers identify you.",
+  skipName: '⏭️ Skip',
+  nameUpdated: (name: string) => `Thanks, ${name}! You're all set.`,
+  nameUpdateFailed: "Couldn't update your name, but no worries — you can continue booking.",
+
   // Origin & destination
   whereToGo: 'Where would you like to go?',
   whereToGoWithRoutes: 'Where would you like to go?\n\nQuick routes or pick a location.\nYou can also type a place name:',

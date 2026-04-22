@@ -18,7 +18,9 @@ export type FlowState =
   | 'CONFIRMING_MARK_SAFE'
   | 'AWAITING_ADD_LOCATION'
   | 'CONFIRMING_ADD_LOCATION'
-  | 'CHOOSING_LANGUAGE';
+  | 'CHOOSING_LANGUAGE'
+  | 'AWAITING_OTP'
+  | 'AWAITING_NAME';
 
 export interface FlowContext {
   state: FlowState;
@@ -42,6 +44,7 @@ export interface FlowContext {
   addingLocationTag?: string;
   addLocationOptions?: { description: string; placeId: string }[];
   language?: SupportedLanguage;
+  authId?: string;             // from POST /v2/auth during registration
 }
 
 export const INITIAL_CONTEXT: FlowContext = {

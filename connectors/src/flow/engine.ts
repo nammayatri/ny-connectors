@@ -293,6 +293,31 @@ export class FlowEngine {
         return;
       }
 
+      // Resend OTP button
+      if (input === 'resend_otp' && ctx.authId) {
+        try {
+          await NammaYatriClient.resendOtp(ctx.authId, ctx.phone);
+          await replyWithButtons(s.otpResent, [
+            [{ text: s.resendOtp, data: 'resend_otp' }],
+          ]);
+        } catch (err: any) {
+          await replyWithButtons(s.otpResendFailed(err.message), [
+            [{ text: s.resendOtp, data: 'resend_otp' }],
+          ]);
+        }
+        return;
+      }
+
+      // Skip name during registration
+      if (input === 'skip_name' && ctx.nyToken && ctx.state === 'AWAITING_NAME') {
+        await reply(s.allSet);
+        const client = new NammaYatriClient(ctx.nyToken);
+        try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
+        await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+        await this.promptForOrigin(ctx, message, reply, replyWithButtons);
+        return;
+      }
+
       // Handle quick route from any state
       const quickMatch = input.match(/^quick:(.+)->(.+)$/);
       if (quickMatch && ctx.nyToken) {
@@ -351,6 +376,12 @@ export class FlowEngine {
           break;
         case 'CONFIRMING_ADD_LOCATION':
           await this.handleConfirmingAddLocation(ctx, input, message, reply, replyWithButtons);
+          break;
+        case 'AWAITING_OTP':
+          await this.handleAwaitingOtp(ctx, input, message, reply, replyWithButtons);
+          break;
+        case 'AWAITING_NAME':
+          await this.handleAwaitingName(ctx, input, message, reply, replyWithButtons);
           break;
         default:
           await this.saveContext(message, INITIAL_CONTEXT);
@@ -444,9 +475,13 @@ export class FlowEngine {
           await reply(s.allSet);
           await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
         } catch (err: any) {
-          await reply(s.setupFailed(err.message));
-          ctx.state = 'IDLE';
-          await this.saveContext(msg, ctx);
+          if (this.isPersonNotFound(err)) {
+            await this.startRegistration(ctx, autoPhone, msg, reply, replyWithButtons);
+          } else {
+            await reply(s.setupFailed(err.message));
+            ctx.state = 'IDLE';
+            await this.saveContext(msg, ctx);
+          }
         }
         return;
       }
@@ -575,9 +610,19 @@ export class FlowEngine {
 
       await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
     } catch (err: any) {
-      await reply(s.setupFailed(err.message));
-      ctx.state = 'IDLE';
-      await this.saveContext(msg, ctx);
+      if (this.isPersonNotFound(err)) {
+        if (connector instanceof TelegramConnector) {
+          await connector.removeKeyboard(
+            this.getReplyTarget(msg, connector),
+            ''
+          );
+        }
+        await this.startRegistration(ctx, phone, msg, reply, replyWithButtons);
+      } else {
+        await reply(s.setupFailed(err.message));
+        ctx.state = 'IDLE';
+        await this.saveContext(msg, ctx);
+      }
     }
   }
 
@@ -624,9 +669,13 @@ export class FlowEngine {
       await reply(s.authSuccess);
       await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
     } catch (err: any) {
-      await reply(s.authFailed(err.message));
-      ctx.state = 'AWAITING_PHONE';
-      await this.saveContext(msg, ctx);
+      if (this.isPersonNotFound(err)) {
+        await this.startRegistration(ctx, phone, msg, reply, replyWithButtons);
+      } else {
+        await reply(s.authFailed(err.message));
+        ctx.state = 'AWAITING_PHONE';
+        await this.saveContext(msg, ctx);
+      }
     }
   }
 
@@ -1602,7 +1651,125 @@ export class FlowEngine {
     await this.saveContext(msg, newCtx);
   }
 
+  // --- Registration Flow ---
+
+  /**
+   * Starts the OTP-based registration flow when authenticate() fails with "person not found".
+   * Calls POST /v2/auth to send OTP, then transitions to AWAITING_OTP.
+   */
+  private async startRegistration(
+    ctx: FlowContext, phone: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+  ): Promise<void> {
+    const s = t(ctx.language);
+    await reply(s.personNotFound);
+
+    try {
+      const { authId } = await NammaYatriClient.requestOtp(phone);
+      ctx.authId = authId;
+      ctx.phone = phone;
+      ctx.state = 'AWAITING_OTP';
+      await this.saveContext(msg, ctx);
+      await replyWithButtons(s.otpSent, [
+        [{ text: s.resendOtp, data: 'resend_otp' }],
+      ]);
+    } catch (err: any) {
+      await reply(s.setupFailed(err.message));
+      ctx.state = 'IDLE';
+      await this.saveContext(msg, ctx);
+    }
+  }
+
+  private async handleAwaitingOtp(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+  ): Promise<void> {
+    const s = t(ctx.language);
+
+    // Validate OTP format (4-6 digits)
+    const otp = input.replace(/\s/g, '');
+    if (!/^\d{4,6}$/.test(otp)) {
+      await replyWithButtons(s.invalidOtp, [
+        [{ text: s.resendOtp, data: 'resend_otp' }],
+      ]);
+      return;
+    }
+
+    try {
+      const { token, person } = await NammaYatriClient.verifyOtp(ctx.authId!, otp);
+      ctx.nyToken = token;
+      ctx.personId = person?.id || '';
+
+      const userKey = `${msg.source}:${msg.senderId}`;
+      await this.tokenStore.set(userKey, {
+        nyToken: token,
+        personId: ctx.personId,
+        phone: ctx.phone || '',
+        savedLocations: [],
+        authenticatedAt: new Date().toISOString(),
+        language: ctx.language,
+      });
+
+      // If person already has a name, skip name entry
+      if (person?.firstName) {
+        await reply(s.otpVerified + ' ' + s.allSet);
+        const client = new NammaYatriClient(token);
+        try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
+        await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+        await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+      } else {
+        // Ask for name
+        await reply(s.otpVerified);
+        ctx.state = 'AWAITING_NAME';
+        await this.saveContext(msg, ctx);
+        await replyWithButtons(s.askName, [
+          [{ text: s.skipName, data: 'skip_name' }],
+        ]);
+      }
+    } catch (err: any) {
+      await replyWithButtons(s.otpVerifyFailed(err.message), [
+        [{ text: s.resendOtp, data: 'resend_otp' }],
+      ]);
+    }
+  }
+
+  private async handleAwaitingName(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+  ): Promise<void> {
+    const s = t(ctx.language);
+    const firstName = input.trim();
+
+    if (firstName) {
+      try {
+        const client = new NammaYatriClient(ctx.nyToken!);
+        await client.updateProfile({ firstName });
+        await reply(s.nameUpdated(firstName));
+      } catch {
+        await reply(s.nameUpdateFailed);
+      }
+    } else {
+      await reply(s.allSet);
+    }
+
+    // Fetch saved locations and proceed to booking
+    const client = new NammaYatriClient(ctx.nyToken!);
+    try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
+    const userKey = `${msg.source}:${msg.senderId}`;
+    await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+    await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+  }
+
   // --- Helpers ---
+
+  /** Check if an auth error indicates the person was not found (new user) */
+  private isPersonNotFound(err: any): boolean {
+    const msg = (err?.message || '').toLowerCase();
+    return msg.includes('person not found') || msg.includes('personnotfound') || msg.includes('person_not_found');
+  }
 
   /** Return Home/Work quick reply buttons from saved locations, for use as origin or dest shortcuts */
   private getHomeWorkButtons(ctx: FlowContext, prefix: 'origin' | 'dest'): { text: string; data: string }[] {
