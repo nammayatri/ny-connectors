@@ -13,6 +13,7 @@ export interface CommandMessage {
   text: string;
   timestamp: string;
   sessionId: string;
+  merchantId?: string;
   metadata: Record<string, unknown>;
   raw: unknown;
 }

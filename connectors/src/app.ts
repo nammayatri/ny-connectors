@@ -3,7 +3,7 @@ import { TelegramConnector, WhatsAppConnector, SlackConnector } from './connecto
 import { Connector } from './connectors/types';
 import { createSessionManager, createTokenStore } from './session';
 import { FlowEngine } from './flow';
-import { config } from './config';
+import { config, getAllMerchants } from './config';
 
 const app = express();
 const sessionManager = createSessionManager();
@@ -37,10 +37,14 @@ async function handleIncoming(connector: Connector, req: Request, res: Response)
 
   const message = connector.parseIncoming(req);
   if (message) {
-    const session = await sessionManager.resolveSession(connector.source, message.senderId);
+    // Scope session by merchant to prevent cross-merchant collisions
+    const scopedUserId = message.merchantId
+      ? `${message.merchantId}:${message.senderId}`
+      : message.senderId;
+    const session = await sessionManager.resolveSession(connector.source, scopedUserId);
     message.sessionId = session.sessionId;
 
-    console.log(`[${connector.source}] ${message.senderName}: ${message.text.substring(0, 50)}`);
+    console.log(`[${connector.source}] merchant=${message.merchantId || 'default'} ${message.senderName}: ${message.text.substring(0, 50)}`);
 
     // Run flow engine (async, don't block response)
     flowEngine.handleMessage(message, connector).catch((err) => {
@@ -63,13 +67,19 @@ app.get('/webhook/whatsapp', (req: Request, res: Response) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === 'subscribe' && token === config.whatsappVerifyToken) {
-    console.log('[whatsapp] Webhook verified');
-    res.status(200).send(String(challenge ?? ''));
-    return;
-  }
   if (mode === 'subscribe') {
-    console.warn('[whatsapp] Verify failed: token mismatch or missing WHATSAPP_VERIFY_TOKEN in .env');
+    // Check against all merchants' verify tokens + the global fallback
+    const allTokens = new Set<string>(
+      getAllMerchants().map((m) => m.whatsappVerifyToken).filter(Boolean)
+    );
+    if (config.whatsappVerifyToken) allTokens.add(config.whatsappVerifyToken);
+
+    if (allTokens.has(token as string)) {
+      console.log('[whatsapp] Webhook verified');
+      res.status(200).send(String(challenge ?? ''));
+      return;
+    }
+    console.warn('[whatsapp] Verify failed: token mismatch');
   }
   res.sendStatus(403);
 });

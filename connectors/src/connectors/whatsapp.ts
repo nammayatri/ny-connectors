@@ -1,22 +1,27 @@
 import { Request } from 'express';
 import crypto from 'crypto';
 import { CommandMessage, Connector } from './types';
-import { config } from '../config';
+import { config, MerchantConfig, getMerchantByPhoneNumberId } from '../config';
 
 export class WhatsAppConnector implements Connector {
   readonly source = 'whatsapp' as const;
 
   verifyWebhook(req: Request): boolean {
-    if (!config.whatsappAppSecret) return false;
-
     const signature = req.headers['x-hub-signature-256'] as string;
     if (!signature) return false;
 
     const rawBody = (req as any).rawBody;
     if (!rawBody) return false;
 
+    // Extract phone_number_id from the payload to identify the merchant
+    const phoneNumberId = req.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+    const merchant = phoneNumberId ? getMerchantByPhoneNumberId(phoneNumberId) : undefined;
+    const appSecret = merchant?.whatsappAppSecret || config.whatsappAppSecret;
+
+    if (!appSecret) return false;
+
     const expected = 'sha256=' + crypto
-      .createHmac('sha256', config.whatsappAppSecret)
+      .createHmac('sha256', appSecret)
       .update(rawBody)
       .digest('hex');
 
@@ -36,6 +41,10 @@ export class WhatsAppConnector implements Connector {
 
     const message = value.messages[0];
     const contact = value.contacts?.[0];
+
+    // Resolve merchant from the incoming phone_number_id
+    const phoneNumberId = value.metadata?.phone_number_id;
+    const merchant = phoneNumberId ? getMerchantByPhoneNumberId(phoneNumberId) : undefined;
 
     // Extract text from different message types
     let text = '';
@@ -62,32 +71,34 @@ export class WhatsAppConnector implements Connector {
       messageId: message.id,
       senderId: message.from,
       senderName: contact?.profile?.name || message.from,
-      chatId: value.metadata?.phone_number_id || message.from,
+      chatId: phoneNumberId || message.from,
       chatType: 'direct',
       text,
       timestamp: new Date(parseInt(message.timestamp) * 1000).toISOString(),
       sessionId: '',
+      merchantId: merchant?.id,
       metadata: {
-        phoneNumberId: value.metadata?.phone_number_id,
+        phoneNumberId,
         displayPhoneNumber: value.metadata?.display_phone_number,
         waId: contact?.wa_id,
         senderPhone: message.from,
+        merchantConfig: merchant,
         ...(locationData && { location: locationData }),
       },
       raw: body,
     };
   }
 
-  async sendMessage(chatId: string, text: string): Promise<void> {
+  async sendMessage(chatId: string, text: string, merchant?: MerchantConfig): Promise<void> {
     await this.sendWhatsApp(chatId, {
       messaging_product: 'whatsapp',
       to: chatId,
       type: 'text',
       text: { body: text },
-    });
+    }, merchant);
   }
 
-  async sendWithButtons(chatId: string, text: string, buttons: { text: string; data: string; description?: string }[]): Promise<void> {
+  async sendWithButtons(chatId: string, text: string, buttons: { text: string; data: string; description?: string }[], merchant?: MerchantConfig): Promise<void> {
     const hasDescriptions = buttons.some((b) => b.description);
     if (buttons.length <= 3 && !hasDescriptions) {
       // Reply buttons (max 3)
@@ -108,7 +119,7 @@ export class WhatsAppConnector implements Connector {
             })),
           },
         },
-      });
+      }, merchant);
     } else {
       // List message (max 10 rows)
       const isEstimates = buttons.some((b) => b.data.startsWith('estimate:'));
@@ -136,23 +147,26 @@ export class WhatsAppConnector implements Connector {
             }],
           },
         },
-      });
+      }, merchant);
     }
   }
 
-  private async sendWhatsApp(chatId: string, payload: any): Promise<void> {
-    const url = `https://graph.facebook.com/v18.0/${config.whatsappPhoneNumberId}/messages`;
+  private async sendWhatsApp(chatId: string, payload: any, merchant?: MerchantConfig): Promise<void> {
+    const phoneNumberId = merchant?.whatsappPhoneNumberId || config.whatsappPhoneNumberId;
+    const accessToken = merchant?.whatsappAccessToken || config.whatsappAccessToken;
+
+    const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.whatsappAccessToken}`,
+        'Authorization': `Bearer ${accessToken}`,
       },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.text().catch(() => '');
-      console.error(`[whatsapp] send failed: ${res.status} ${err}`);
+      console.error(`[whatsapp] send failed (merchant=${merchant?.id || 'default'}): ${res.status} ${err}`);
     }
   }
 }

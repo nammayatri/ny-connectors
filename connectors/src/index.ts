@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { app, shutdown } from './app';
-import { config } from './config';
+import { config, getAllMerchants } from './config';
 
 const server = app.listen(config.port, () => {
   console.log(`[gateway] Message Gateway started on port ${config.port}`);
@@ -8,9 +8,13 @@ const server = app.listen(config.port, () => {
   console.log(`[gateway] Redis: ${config.redisUrl}`);
   console.log(`[gateway] Session TTL: ${config.sessionTtlSeconds}s`);
   console.log(`[gateway] Connectors: telegram, whatsapp, slack`);
-  console.log(`[gateway] Dashboard token: ${config.nyDashboardToken ? `set (len=${config.nyDashboardToken.length})` : 'NOT SET'}`);
   console.log(`[gateway] Dashboard URL: ${config.nyDashboardUrl}`);
-  console.log(`[gateway] City: ${config.nyCity}`);
+
+  const merchants = getAllMerchants();
+  console.log(`[gateway] Merchants: ${merchants.length}`);
+  for (const m of merchants) {
+    console.log(`[gateway]   ${m.id}: WA=${m.whatsappPhoneNumberId} merchant=${m.nyDashboardMerchant} city=${m.nyCity} dashToken=${m.nyDashboardToken ? 'set' : 'NOT SET'}`);
+  }
 });
 
 const gracefulShutdown = async (signal: string) => {

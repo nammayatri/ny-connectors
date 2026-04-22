@@ -45,6 +45,7 @@ export interface FlowContext {
   addLocationOptions?: { description: string; placeId: string }[];
   language?: SupportedLanguage;
   authId?: string;             // from POST /v2/auth during registration
+  pendingAction?: 'status';    // deferred action to run after authentication
 }
 
 export const INITIAL_CONTEXT: FlowContext = {
