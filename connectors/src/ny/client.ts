@@ -1,4 +1,4 @@
-import { config } from '../config';
+import { config, MerchantConfig } from '../config';
 import {
   CITY_SEARCH_RADIUS_METERS,
   DEFAULT_CITY,
@@ -141,9 +141,12 @@ export class NammaYatriClient {
   // --- Dashboard registration APIs ---
   // Uses /dashboard/{merchantId}/{city}/rideBooking/registration/* endpoints
 
-  /** Dashboard registration base URL */
-  private static get registrationBase(): string {
-    return `${config.nyDashboardUrl}/${config.nyDashboardMerchant}/${config.nyCity}/rideBooking/registration`;
+  /** Dashboard registration base URL, resolved per-merchant when provided */
+  private static registrationBase(merchant?: MerchantConfig): string {
+    const dashboardUrl = config.nyDashboardUrl;
+    const dashboardMerchant = merchant?.nyDashboardMerchant || config.nyDashboardMerchant;
+    const city = merchant?.nyCity || config.nyCity;
+    return `${dashboardUrl}/${dashboardMerchant}/${city}/rideBooking/registration`;
   }
 
   /**
@@ -153,8 +156,10 @@ export class NammaYatriClient {
   static async requestOtp(
     mobileNumber: string,
     _options?: { firstName?: string; lastName?: string; email?: string },
+    merchant?: MerchantConfig,
   ): Promise<{ authId: string; attempts: number }> {
-    const url = `${NammaYatriClient.registrationBase}/auth`;
+    const url = `${NammaYatriClient.registrationBase(merchant)}/auth`;
+    const dashboardToken = merchant?.nyDashboardToken || config.nyDashboardToken;
     const body = {
       mobileCountryCode: '+91',
       mobileNumber,
@@ -163,7 +168,7 @@ export class NammaYatriClient {
 
     const res = await loggedFetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', token: config.nyDashboardToken },
+      headers: { 'Content-Type': 'application/json', token: dashboardToken },
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -177,11 +182,11 @@ export class NammaYatriClient {
   /**
    * Resend OTP — re-calls the auth endpoint (dashboard API has no separate resend).
    */
-  static async resendOtp(_authId: string, mobileNumber?: string): Promise<void> {
+  static async resendOtp(_authId: string, mobileNumber?: string, merchant?: MerchantConfig): Promise<void> {
     if (!mobileNumber) {
       throw new Error('Phone number is required to resend OTP');
     }
-    await NammaYatriClient.requestOtp(mobileNumber);
+    await NammaYatriClient.requestOtp(mobileNumber, undefined, merchant);
   }
 
   /**
@@ -191,11 +196,13 @@ export class NammaYatriClient {
   static async verifyOtp(
     authId: string,
     otp: string,
+    merchant?: MerchantConfig,
   ): Promise<{ token: string; person: any }> {
-    const url = `${NammaYatriClient.registrationBase}/${authId}/verify`;
+    const url = `${NammaYatriClient.registrationBase(merchant)}/${authId}/verify`;
+    const dashboardToken = merchant?.nyDashboardToken || config.nyDashboardToken;
     const res = await loggedFetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', token: config.nyDashboardToken },
+      headers: { 'Content-Type': 'application/json', token: dashboardToken },
       body: JSON.stringify({ otp, deviceToken: 'ny-connectors', whatsappNotificationEnroll: 'OPT_IN' }),
     });
     if (!res.ok) {
@@ -223,16 +230,17 @@ export class NammaYatriClient {
     }
   }
 
-  static async authenticate(mobileNumber: string): Promise<{ token: string; personId: string; person: any }> {
+  static async authenticate(mobileNumber: string, merchant?: MerchantConfig): Promise<{ token: string; personId: string; person: any }> {
     const params = new URLSearchParams({
       mobileNumber,
       mobileCountryCode: '+91',
-      merchantId: config.nyMerchantId,
+      merchantId: merchant?.nyMerchantId || config.nyMerchantId,
     });
+    const preAuthToken = merchant?.nyPreAuthToken || config.nyPreAuthToken;
     const authBase = config.nyAuthUrl.replace(/\/v2\/?$/, '');
     const res = await loggedFetch(`${authBase}/internal/auth/getToken?${params}`, {
       method: 'GET',
-      headers: { 'Content-Type': 'application/json', token: config.nyPreAuthToken },
+      headers: { 'Content-Type': 'application/json', token: preAuthToken },
     });
 
     if (!res.ok) {

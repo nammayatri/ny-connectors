@@ -8,7 +8,7 @@ import { Connector, CommandMessage } from '../connectors/types';
 import { TelegramConnector } from '../connectors/telegram';
 import { WhatsAppConnector } from '../connectors/whatsapp';
 import { SlackConnector } from '../connectors/slack';
-import { config } from '../config';
+import { config, MerchantConfig } from '../config';
 import { t, getAllLanguages, isValidLanguage, SupportedLanguage } from '../i18n';
 
 type AnySessionManager = SessionManager | MemorySessionManager;
@@ -34,7 +34,13 @@ export class FlowEngine {
 
   async handleMessage(message: CommandMessage, connector: Connector): Promise<void> {
     const chatId = this.getReplyTarget(message, connector);
-    const reply = (text: string) => connector.sendMessage(chatId, text);
+    const merchantCfg = this.getMerchantConfig(message);
+    const reply = (text: string) => {
+      if (connector instanceof WhatsAppConnector) {
+        return connector.sendMessage(chatId, text, merchantCfg);
+      }
+      return connector.sendMessage(chatId, text);
+    };
     const replyWithButtons = (text: string, buttons: { text: string; data: string; description?: string }[][]) => {
       if (connector instanceof TelegramConnector) {
         const tgButtons = buttons.map((row) =>
@@ -44,7 +50,7 @@ export class FlowEngine {
       }
       if (connector instanceof WhatsAppConnector) {
         const flat = buttons.flat();
-        return connector.sendWithButtons(chatId, text, flat);
+        return connector.sendWithButtons(chatId, text, flat, merchantCfg);
       }
       if (connector instanceof SlackConnector) {
         const flat = buttons.flat();
@@ -68,7 +74,7 @@ export class FlowEngine {
     const input = message.text.trim();
 
     // Hydrate token and language from persistent store if not already in session
-    const userKey = `${message.source}:${message.senderId}`;
+    const userKey = this.scopedUserKey(message);
     if (!ctx.nyToken) {
       const stored = await this.tokenStore.get(userKey);
       if (stored) {
@@ -118,10 +124,9 @@ export class FlowEngine {
 
       if (STATUS_TRIGGERS.some((tr) => input.toLowerCase().includes(tr))) {
         if (!ctx.nyToken) {
-          await replyWithButtons(
-            s.needSignIn,
-            [[{ text: s.bookARide, data: 'book' }]]
-          );
+          // Authenticate first, then show status after auth completes
+          ctx.pendingAction = 'status';
+          await this.handleIdle(ctx, 'book', message, reply, replyWithButtons, connector);
           return;
         }
         await this.handleStatus(ctx, message, reply, replyWithButtons);
@@ -296,7 +301,7 @@ export class FlowEngine {
       // Resend OTP button
       if (input === 'resend_otp' && ctx.authId) {
         try {
-          await NammaYatriClient.resendOtp(ctx.authId, ctx.phone);
+          await NammaYatriClient.resendOtp(ctx.authId, ctx.phone, merchantCfg);
           await replyWithButtons(s.otpResent, [
             [{ text: s.resendOtp, data: 'resend_otp' }],
           ]);
@@ -313,7 +318,7 @@ export class FlowEngine {
         await reply(s.allSet);
         const client = new NammaYatriClient(ctx.nyToken);
         try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
-        await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+        await this.tokenStore.updateLocations(this.scopedUserKey(message), ctx.savedLocations || []);
         await this.promptForOrigin(ctx, message, reply, replyWithButtons);
         return;
       }
@@ -392,7 +397,7 @@ export class FlowEngine {
       if (err.message?.includes('401')) {
         ctx.nyToken = undefined;
         ctx.state = 'IDLE';
-        await this.tokenStore.delete(userKey);
+        await this.tokenStore.delete(this.scopedUserKey(message));
         await this.saveContext(message, ctx);
         await reply(s.sessionExpired);
       } else {
@@ -430,7 +435,8 @@ export class FlowEngine {
 
     if (!ctx.nyToken) {
       // Check persistent token store
-      const userKey = `${msg.source}:${msg.senderId}`;
+      const userKey = this.scopedUserKey(msg);
+      const merchant = this.getMerchantConfig(msg);
       const stored = await this.tokenStore.get(userKey);
       if (stored) {
         ctx.nyToken = stored.nyToken;
@@ -449,7 +455,7 @@ export class FlowEngine {
       if (autoPhone) {
         ctx.phone = autoPhone;
         try {
-          const { token, personId: authPersonId } = await NammaYatriClient.authenticate(autoPhone);
+          const { token, personId: authPersonId } = await NammaYatriClient.authenticate(autoPhone, merchant);
           ctx.nyToken = token;
 
           const client = new NammaYatriClient(token);
@@ -460,9 +466,8 @@ export class FlowEngine {
             personId = await client.getPersonId().catch(() => '');
           }
           ctx.personId = personId;
-          console.log(`[flow] Auto-auth via ${msg.source} phone=${autoPhone} personId=${personId}`);
+          console.log(`[flow] Auto-auth via ${msg.source} phone=${autoPhone} personId=${personId} merchant=${msg.merchantId || 'default'}`);
 
-          const userKey = `${msg.source}:${msg.senderId}`;
           await this.tokenStore.set(userKey, {
             nyToken: token,
             personId,
@@ -574,7 +579,8 @@ export class FlowEngine {
     }
 
     try {
-      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(phone);
+      const merchant = this.getMerchantConfig(msg);
+      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(phone, merchant);
       ctx.nyToken = token;
       ctx.phone = phone;
 
@@ -589,7 +595,7 @@ export class FlowEngine {
       ctx.personId = personId;
       console.log(`[flow] Resolved personId=${personId}`);
 
-      const userKey = `${msg.source}:${msg.senderId}`;
+      const userKey = this.scopedUserKey(msg);
       await this.tokenStore.set(userKey, {
         nyToken: token,
         personId,
@@ -643,7 +649,8 @@ export class FlowEngine {
     ctx.phone = phone;
 
     try {
-      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(phone);
+      const merchant = this.getMerchantConfig(msg);
+      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(phone, merchant);
       ctx.nyToken = token;
 
       const client = new NammaYatriClient(token);
@@ -656,7 +663,7 @@ export class FlowEngine {
       ctx.personId = personId;
       console.log(`[flow] Resolved personId=${personId}`);
 
-      const userKey = `${msg.source}:${msg.senderId}`;
+      const userKey = this.scopedUserKey(msg);
       await this.tokenStore.set(userKey, {
         nyToken: token,
         personId,
@@ -684,6 +691,14 @@ export class FlowEngine {
     reply: (txt: string) => Promise<void>,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
+    // If user triggered "track" before auth, honour that now
+    if (ctx.pendingAction === 'status') {
+      ctx.pendingAction = undefined;
+      await this.saveContext(msg, ctx);
+      await this.handleStatus(ctx, msg, reply, replyWithButtons);
+      return;
+    }
+
     const s = t(ctx.language);
     ctx.state = 'AWAITING_ORIGIN';
     await this.saveContext(msg, ctx);
@@ -1058,8 +1073,7 @@ export class FlowEngine {
       try {
         await client.saveLocation(tag, details);
         ctx.savedLocations = await client.getSavedLocations().catch(() => ctx.savedLocations);
-        const userKey = `${msg.source}:${msg.senderId}`;
-        await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+        await this.tokenStore.updateLocations(this.scopedUserKey(msg), ctx.savedLocations || []);
       } catch { /* fall through */ }
       ctx.addingLocationTag = undefined;
       ctx.addLocationOptions = undefined;
@@ -1110,8 +1124,7 @@ export class FlowEngine {
       await client.saveLocation(tag, details);
       // Refresh saved locations from API
       ctx.savedLocations = await client.getSavedLocations().catch(() => ctx.savedLocations);
-      const userKey = `${msg.source}:${msg.senderId}`;
-      await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+      await this.tokenStore.updateLocations(this.scopedUserKey(msg), ctx.savedLocations || []);
       await reply(s.locationSaved(tag));
     } catch (err: any) {
       console.error(`[flow] saveLocation failed: ${err.message}`);
@@ -1364,7 +1377,7 @@ export class FlowEngine {
     const otp = ride?.rideOtp || booking.rideOtp;
     const hasDriver = !!(driverName || vehicleNumber);
 
-    const trackingLink = `https://nammayatri.in/track/${booking.id}`;
+    const trackingLink = this.buildTrackingLink(booking, msg);
 
     let confirmText: string;
     if (hasDriver) {
@@ -1486,7 +1499,7 @@ export class FlowEngine {
     const rideStatus = ride?.status?.toUpperCase();
     const driverName = b.driverName || ride?.driverName;
     const vehicleNumber = b.vehicleNumber || ride?.vehicleNumber;
-    const trackingLink = `https://nammayatri.in/track/${b.id}`;
+    const trackingLink = this.buildTrackingLink(b, msg);
 
     // Determine ride status text
     const statusText = rideStatus === 'INPROGRESS' ? s.rideInProgressStatus : s.rideNotStarted;
@@ -1546,7 +1559,7 @@ export class FlowEngine {
     const vehicleNumber = b.vehicleNumber || ride?.vehicleNumber;
     const driverPhoneNum = ride?.driverNumber || b.driverNumber || b.merchantExoPhone;
     const otp = ride?.rideOtp || b.rideOtp;
-    const trackingLink = `https://nammayatri.in/track/${b.id}`;
+    const trackingLink = this.buildTrackingLink(b, msg);
 
     const lines = [s.activeRide];
     if (driverName) lines.push(s.driverLabel(driverName));
@@ -1687,7 +1700,8 @@ export class FlowEngine {
     await reply(s.personNotFound);
 
     try {
-      const { authId } = await NammaYatriClient.requestOtp(phone);
+      const merchant = this.getMerchantConfig(msg);
+      const { authId } = await NammaYatriClient.requestOtp(phone, undefined, merchant);
       ctx.authId = authId;
       ctx.phone = phone;
       ctx.state = 'AWAITING_OTP';
@@ -1719,11 +1733,12 @@ export class FlowEngine {
     }
 
     try {
-      const { token, person } = await NammaYatriClient.verifyOtp(ctx.authId!, otp);
+      const merchant = this.getMerchantConfig(msg);
+      const { token, person } = await NammaYatriClient.verifyOtp(ctx.authId!, otp, merchant);
       ctx.nyToken = token;
       ctx.personId = person?.id || '';
 
-      const userKey = `${msg.source}:${msg.senderId}`;
+      const userKey = this.scopedUserKey(msg);
       await this.tokenStore.set(userKey, {
         nyToken: token,
         personId: ctx.personId,
@@ -1779,8 +1794,7 @@ export class FlowEngine {
     // Fetch saved locations and proceed to booking
     const client = new NammaYatriClient(ctx.nyToken!);
     try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
-    const userKey = `${msg.source}:${msg.senderId}`;
-    await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+    await this.tokenStore.updateLocations(this.scopedUserKey(msg), ctx.savedLocations || []);
     await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
   }
 
@@ -1801,7 +1815,7 @@ export class FlowEngine {
   private async searchRideWithReAuth(
     ctx: FlowContext, msg: CommandMessage
   ): Promise<{ searchId: string; client: NammaYatriClient } | 'NEEDS_REGISTRATION'> {
-    const userKey = `${msg.source}:${msg.senderId}`;
+    const userKey = this.scopedUserKey(msg);
     let client = new NammaYatriClient(ctx.nyToken!);
 
     try {
@@ -1817,7 +1831,8 @@ export class FlowEngine {
       console.log(`[flow] searchRide 400 — attempting silent re-auth for phone=${phone}`);
 
       try {
-        const { token, personId } = await NammaYatriClient.authenticate(phone);
+        const merchant = this.getMerchantConfig(msg);
+        const { token, personId } = await NammaYatriClient.authenticate(phone, merchant);
         ctx.nyToken = token;
         ctx.personId = personId;
         await this.tokenStore.set(userKey, {
@@ -1881,6 +1896,39 @@ export class FlowEngine {
     };
   }
 
+  // --- Tracking link ---
+
+  /** Build a tracking link using the merchant's URL template. Uses rideId when
+   *  available (from rideList[0].id), otherwise falls back to bookingId. */
+  private buildTrackingLink(booking: any, msg: CommandMessage): string {
+    const ride = booking.rideList?.[0];
+    const rideId = ride?.id || booking.id;
+    const merchant = this.getMerchantConfig(msg);
+    const template = merchant?.nyTrackingUrl || 'https://www.nammayatri.in/u?vp=shareRide&rideId={rideId}';
+    return template.replace('{rideId}', rideId);
+  }
+
+  // --- Multi-merchant helpers ---
+
+  /** Extract MerchantConfig from message metadata (set by WhatsApp connector) */
+  private getMerchantConfig(msg: CommandMessage): MerchantConfig | undefined {
+    return msg.metadata?.merchantConfig as MerchantConfig | undefined;
+  }
+
+  /** Build a merchant-scoped user key for session/token store lookups.
+   *  Format: "{source}:{merchantId}:{senderId}" when merchantId is present,
+   *  otherwise "{source}:{senderId}" for backward compat. */
+  private scopedUserKey(msg: CommandMessage): string {
+    const base = `${msg.source}:${msg.senderId}`;
+    return msg.merchantId ? `${msg.source}:${msg.merchantId}:${msg.senderId}` : base;
+  }
+
+  /** Build a merchant-scoped session userId (the part after source:).
+   *  This is passed to session manager methods which prepend their own prefix. */
+  private scopedSessionUserId(msg: CommandMessage): string {
+    return msg.merchantId ? `${msg.merchantId}:${msg.senderId}` : msg.senderId;
+  }
+
   private getReplyTarget(msg: CommandMessage, connector: Connector): string {
     if (connector.source === 'whatsapp') {
       return (msg.metadata?.senderPhone as string) || msg.senderId;
@@ -1889,7 +1937,7 @@ export class FlowEngine {
   }
 
   private async getContext(msg: CommandMessage): Promise<FlowContext> {
-    const session = await this.sessionManager.getSession(msg.source, msg.senderId);
+    const session = await this.sessionManager.getSession(msg.source, this.scopedSessionUserId(msg));
     if (session?.metadata && Object.keys(session.metadata).length > 0) {
       return session.metadata as unknown as FlowContext;
     }
@@ -1897,7 +1945,7 @@ export class FlowEngine {
   }
 
   private async saveContext(msg: CommandMessage, ctx: FlowContext): Promise<void> {
-    await this.sessionManager.updateContext(msg.source, msg.senderId, ctx);
+    await this.sessionManager.updateContext(msg.source, this.scopedSessionUserId(msg), ctx);
   }
 
   private extractPhoneFromChannel(msg: CommandMessage): string | null {
