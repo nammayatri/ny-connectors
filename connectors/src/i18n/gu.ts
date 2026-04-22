@@ -48,7 +48,7 @@ export const gu: LanguageStrings = {
   enterPickupAndDrop: '📍 પિકઅપ-ડ્રોપ દાખલ',
   enterPickupPrompt: 'તમારું પિકઅપ સ્થાન દાખલ કરો, અથવા લોકેશન પિન મોકલો:',
   enterDropPrompt: 'હવે તમારું ડ્રોપ સ્થાન દાખલ કરો, અથવા લોકેશન પિન મોકલો:',
-  locationPinReceived: '📍 સ્થાન પ્રાપ્ત થયું',
+  locationPinReceived: (address: string) => `📍 સ્થાન પ્રાપ્ત થયું: ${address}`,
   favouriteLocations: 'અથવા તમારા સાચવેલા સ્થાનોમાંથી પસંદ કરો:',
   addHome: '🏠 ઘર ઉમેરો',
   addWork: '💼 ઓફિસ ઉમેરો',

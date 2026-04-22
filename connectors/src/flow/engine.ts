@@ -18,6 +18,17 @@ const CANCEL_TRIGGERS = ['cancel', 'stop', 'exit', 'quit', 'reset'];
 const STATUS_TRIGGERS = ['status', 'track', 'where is my ride'];
 
 const POLLING_INTERVAL_MS = 3000;
+
+function formatAddress(details: NYPlaceDetails): string {
+  const { area, building, street } = details.address;
+  const parts = [building, street, area].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : `${details.lat}, ${details.lon}`;
+}
+
+function formatSavedAddress(loc: Record<string, any>): string | undefined {
+  const parts = [loc.building, loc.area, loc.city].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : undefined;
+}
 const POLLING_MAX_ITERATIONS = 60;       // 60 × 3s = 3 min
 const POLLING_NOTIFY_EVERY = 10;         // notify every 10 × 3s = 30s
 
@@ -743,14 +754,14 @@ export class FlowEngine {
     const s = t(ctx.language);
     if (ctx.savedLocations && ctx.savedLocations.length >= 2) {
       const sorted = this.sortSavedLocations(ctx.savedLocations);
-      const buttons: { text: string; data: string }[][] = [];
+      const buttons: { text: string; data: string; description?: string }[][] = [];
 
       for (let i = 0; i < sorted.length; i++) {
         for (let j = 0; j < sorted.length; j++) {
           if (i !== j) {
             const from = sorted[i];
             const to = sorted[j];
-            buttons.push([{ text: `${from.tag} → ${to.tag}`, data: `quick:${from.tag}->${to.tag}` }]);
+            buttons.push([{ text: `${from.tag} → ${to.tag}`, data: `quick:${from.tag}->${to.tag}`, description: `${formatSavedAddress(from) || from.tag} → ${formatSavedAddress(to) || to.tag}` }]);
           }
         }
       }
@@ -758,6 +769,7 @@ export class FlowEngine {
       buttons.push(...sorted.map((loc) => ([{
         text: s.fromLabel(loc.tag),
         data: `origin:${loc.tag}`,
+        description: formatSavedAddress(loc),
       }])));
 
       await replyWithButtons(overrideText || s.whereToGoWithRoutes, buttons);
@@ -765,6 +777,7 @@ export class FlowEngine {
       const buttons = ctx.savedLocations.map((loc) => ([{
         text: s.fromLabel(loc.tag),
         data: `origin:${loc.tag}`,
+        description: formatSavedAddress(loc),
       }]));
       await replyWithButtons(overrideText || s.pickSavedOrType, buttons);
     } else {
@@ -798,7 +811,13 @@ export class FlowEngine {
       address: { area: to.area, building: to.building, city: to.city, country: to.country, state: to.state },
     };
 
-    await reply(`${from.tag} → ${to.tag}`);
+    const fromAddr = formatSavedAddress(from);
+    const toAddr = formatSavedAddress(to);
+    let routeMsg = `${from.tag} → ${to.tag}`;
+    if (fromAddr || toAddr) {
+      routeMsg += `\n${fromAddr || from.tag} → ${toAddr || to.tag}`;
+    }
+    await reply(routeMsg);
     await this.searchAndShowEstimates(ctx, msg, reply, replyWithButtons);
   }
 
@@ -844,7 +863,7 @@ export class FlowEngine {
     if (input === '__location_pin__' && location) {
       const client = new NammaYatriClient(ctx.nyToken!);
       ctx.origin = await client.reverseGeocode(location.latitude, location.longitude);
-      await reply(s.locationPinReceived);
+      await reply(s.locationPinReceived(formatAddress(ctx.origin)));
       ctx.state = 'AWAITING_DESTINATION';
       await this.saveContext(msg, ctx);
       await this.promptForDestination(ctx, msg, reply, replyWithButtons);
@@ -871,7 +890,8 @@ export class FlowEngine {
         },
       };
       ctx.originTag = saved.tag;
-      await reply(s.pickup(saved.tag));
+      const addr = formatSavedAddress(saved);
+      await reply(s.pickup(saved.tag) + (addr ? `\n${addr}` : ''));
       ctx.state = 'AWAITING_DESTINATION';
       await this.saveContext(msg, ctx);
       await this.promptForDestination(ctx, msg, reply, replyWithButtons);
@@ -951,6 +971,7 @@ export class FlowEngine {
       const buttons = sorted.map((loc) => ([{
         text: `📍 ${loc.tag}`,
         data: `dest:${loc.tag}`,
+        description: formatSavedAddress(loc),
       }]));
       await replyWithButtons(s.enterDropPrompt, buttons);
     } else {
@@ -977,7 +998,7 @@ export class FlowEngine {
     if (input === '__location_pin__' && location) {
       const reverseClient = new NammaYatriClient(ctx.nyToken!);
       ctx.destination = await reverseClient.reverseGeocode(location.latitude, location.longitude);
-      await reply(s.locationPinReceived);
+      await reply(s.locationPinReceived(formatAddress(ctx.destination)));
       await this.searchAndShowEstimates(ctx, msg, reply, replyWithButtons);
       return;
     }
@@ -1000,7 +1021,8 @@ export class FlowEngine {
           state: saved.state,
         },
       };
-      await reply(s.drop(saved.tag));
+      const addr = formatSavedAddress(saved);
+      await reply(s.drop(saved.tag) + (addr ? `\n${addr}` : ''));
       await this.searchAndShowEstimates(ctx, msg, reply, replyWithButtons);
       return;
     }

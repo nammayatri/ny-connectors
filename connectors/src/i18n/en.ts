@@ -50,7 +50,7 @@ export const en: LanguageStrings = {
   enterPickupAndDrop: '📍 Enter pickup-drop',
   enterPickupPrompt: 'Enter your pickup location, or send a location pin:',
   enterDropPrompt: 'Now enter your drop location, or send a location pin:',
-  locationPinReceived: '📍 Location received',
+  locationPinReceived: (address: string) => `📍 Location received: ${address}`,
   favouriteLocations: 'Or pick from your saved locations:',
   addHome: '🏠 Add Home',
   addWork: '💼 Add Work',
