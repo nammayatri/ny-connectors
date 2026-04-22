@@ -435,7 +435,9 @@ export class NammaYatriClient {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      throw new Error(`Ride search failed: ${res.status}`);
+      const err = await res.json().catch(() => ({} as any)) as any;
+      const msg = err.errorMessage || err.errorCode || '';
+      throw new Error(`Ride search failed: ${res.status}${msg ? ` — ${msg}` : ''}`);
     }
     const data = await res.json() as any;
     console.log(`[rideSearch] searchId=${data.searchId}`);

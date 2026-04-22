@@ -1132,13 +1132,23 @@ export class FlowEngine {
     const s = t(ctx.language);
     await reply(s.searchingRides);
 
-    const client = new NammaYatriClient(ctx.nyToken!);
+    const result = await this.searchRideWithReAuth(ctx, msg);
+    if (result === 'NEEDS_REGISTRATION') {
+      const phone = ctx.phone || this.extractPhoneFromChannel(msg);
+      if (phone) {
+        await this.startRegistration(ctx, phone, msg, reply, replyWithButtons);
+      } else {
+        ctx.state = 'IDLE';
+        await this.saveContext(msg, ctx);
+        await reply(s.sessionExpired);
+      }
+      return;
+    }
+    const { searchId, client } = result;
+    ctx.searchId = searchId;
 
     // Kick off history fetch concurrently — it runs while we wait for estimates
     const historyPromise: Promise<NYRideHistoryItem[]> = client.getRideHistory(20).catch(() => []);
-
-    const searchId = await client.searchRide(ctx.origin!, ctx.destination!);
-    ctx.searchId = searchId;
 
     let estimates: any[] = [];
     for (let i = 0; i < 5; i++) {
@@ -1389,8 +1399,19 @@ export class FlowEngine {
     const s = t(ctx.language);
     await reply(s.retrying(ctx.selectedServiceTier || 'your ride'));
 
-    const client = new NammaYatriClient(ctx.nyToken!);
-    const searchId = await client.searchRide(ctx.origin!, ctx.destination!);
+    const result = await this.searchRideWithReAuth(ctx, msg);
+    if (result === 'NEEDS_REGISTRATION') {
+      const phone = ctx.phone || this.extractPhoneFromChannel(msg);
+      if (phone) {
+        await this.startRegistration(ctx, phone, msg, reply, replyWithButtons);
+      } else {
+        ctx.state = 'IDLE';
+        await this.saveContext(msg, ctx);
+        await reply(s.sessionExpired);
+      }
+      return;
+    }
+    const { searchId, client } = result;
     ctx.searchId = searchId;
 
     let estimates: any[] = [];
@@ -1769,6 +1790,61 @@ export class FlowEngine {
   private isPersonNotFound(err: any): boolean {
     const msg = (err?.message || '').toLowerCase();
     return msg.includes('person not found') || msg.includes('personnotfound') || msg.includes('person_not_found');
+  }
+
+  /**
+   * Attempt a ride search. On 400, silently re-authenticate using internal auth:
+   * - If re-auth succeeds → update token in ctx + store, retry search with new token
+   * - If re-auth fails with "person not found" → return 'NEEDS_REGISTRATION'
+   * - Otherwise rethrow the original error
+   */
+  private async searchRideWithReAuth(
+    ctx: FlowContext, msg: CommandMessage
+  ): Promise<{ searchId: string; client: NammaYatriClient } | 'NEEDS_REGISTRATION'> {
+    const userKey = `${msg.source}:${msg.senderId}`;
+    let client = new NammaYatriClient(ctx.nyToken!);
+
+    try {
+      const searchId = await client.searchRide(ctx.origin!, ctx.destination!);
+      return { searchId, client };
+    } catch (err: any) {
+      if (!err.message?.includes('400')) throw err;
+
+      // 400 from searchRide — token may be stale (deleted user). Try silent re-auth.
+      const phone = ctx.phone || this.extractPhoneFromChannel(msg);
+      if (!phone) throw err; // Can't re-auth without phone number
+
+      console.log(`[flow] searchRide 400 — attempting silent re-auth for phone=${phone}`);
+
+      try {
+        const { token, personId } = await NammaYatriClient.authenticate(phone);
+        ctx.nyToken = token;
+        ctx.personId = personId;
+        await this.tokenStore.set(userKey, {
+          nyToken: token,
+          personId,
+          phone,
+          savedLocations: ctx.savedLocations,
+          authenticatedAt: new Date().toISOString(),
+          language: ctx.language,
+        });
+        await this.saveContext(msg, ctx);
+
+        // Retry search with fresh token
+        client = new NammaYatriClient(token);
+        const searchId = await client.searchRide(ctx.origin!, ctx.destination!);
+        return { searchId, client };
+      } catch (authErr: any) {
+        if (this.isPersonNotFound(authErr)) {
+          // User was truly deleted — clear stale token and signal registration needed
+          ctx.nyToken = undefined;
+          await this.tokenStore.delete(userKey);
+          await this.saveContext(msg, ctx);
+          return 'NEEDS_REGISTRATION';
+        }
+        throw err; // Re-auth failed for other reason, throw original search error
+      }
+    }
   }
 
   /** Return Home/Work quick reply buttons from saved locations, for use as origin or dest shortcuts */
