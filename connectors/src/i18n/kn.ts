@@ -48,7 +48,7 @@ export const kn: LanguageStrings = {
   enterPickupAndDrop: '📍 ಪಿಕಪ್-ಡ್ರಾಪ್ ನಮೂದಿಸಿ',
   enterPickupPrompt: 'ನಿಮ್ಮ ಪಿಕಪ್ ಸ್ಥಳ ನಮೂದಿಸಿ, ಅಥವಾ ಲೊಕೇಶನ್ ಪಿನ್ ಕಳುಹಿಸಿ:',
   enterDropPrompt: 'ಈಗ ನಿಮ್ಮ ಡ್ರಾಪ್ ಸ್ಥಳ ನಮೂದಿಸಿ, ಅಥವಾ ಲೊಕೇಶನ್ ಪಿನ್ ಕಳುಹಿಸಿ:',
-  locationPinReceived: '📍 ಸ್ಥಳ ಸ್ವೀಕರಿಸಲಾಗಿದೆ',
+  locationPinReceived: (address: string) => `📍 ಸ್ಥಳ ಸ್ವೀಕರಿಸಲಾಗಿದೆ: ${address}`,
   favouriteLocations: 'ಅಥವಾ ನಿಮ್ಮ ಉಳಿಸಿದ ಸ್ಥಳಗಳಿಂದ ಆಯ್ಕೆ ಮಾಡಿ:',
   addHome: '🏠 ಮನೆ ಸೇರಿಸಿ',
   addWork: '💼 ಕಚೇರಿ ಸೇರಿಸಿ',

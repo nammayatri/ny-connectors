@@ -51,7 +51,7 @@ export interface LanguageStrings {
   enterPickupAndDrop: string;
   enterPickupPrompt: string;
   enterDropPrompt: string;
-  locationPinReceived: string;
+  locationPinReceived: (address: string) => string;
   favouriteLocations: string;
   addHome: string;
   addWork: string;

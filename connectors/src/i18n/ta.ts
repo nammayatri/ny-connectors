@@ -48,7 +48,7 @@ export const ta: LanguageStrings = {
   enterPickupAndDrop: '📍 பிக்அப்-டிராப்',
   enterPickupPrompt: 'உங்கள் பிக்அப் இடத்தை உள்ளிடவும், அல்லது லொகேஷன் பின் அனுப்பவும்:',
   enterDropPrompt: 'இப்போது உங்கள் டிராப் இடத்தை உள்ளிடவும், அல்லது லொகேஷன் பின் அனுப்பவும்:',
-  locationPinReceived: '📍 இடம் பெறப்பட்டது',
+  locationPinReceived: (address: string) => `📍 இடம் பெறப்பட்டது: ${address}`,
   favouriteLocations: 'அல்லது உங்கள் சேமித்த இடங்களிலிருந்து தேர்ந்தெடுக்கவும்:',
   addHome: '🏠 வீடு சேர்',
   addWork: '💼 அலுவலகம் சேர்',

@@ -48,7 +48,7 @@ export const te: LanguageStrings = {
   enterPickupAndDrop: '📍 పికప్-డ్రాప్ నమోదు',
   enterPickupPrompt: 'మీ పికప్ ప్రదేశం నమోదు చేయండి, లేదా లొకేషన్ పిన్ పంపండి:',
   enterDropPrompt: 'ఇప్పుడు మీ డ్రాప్ ప్రదేశం నమోదు చేయండి, లేదా లొకేషన్ పిన్ పంపండి:',
-  locationPinReceived: '📍 ప్రదేశం అందుకుంది',
+  locationPinReceived: (address: string) => `📍 ప్రదేశం అందుకుంది: ${address}`,
   favouriteLocations: 'లేదా మీ సేవ్ చేసిన ప్రదేశాల నుండి ఎంచుకోండి:',
   addHome: '🏠 ఇల్లు జోడించండి',
   addWork: '💼 ఆఫీస్ జోడించండి',

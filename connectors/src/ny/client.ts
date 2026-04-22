@@ -376,7 +376,7 @@ export class NammaYatriClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
       body: JSON.stringify({
-        getBy: { contents: `${lat},${lon}`, tag: 'ByLatLong' },
+        getBy: { contents: { lat, lon }, tag: 'ByLatLong' },
         language: 'ENGLISH',
         sessionToken: 'default-token',
       }),

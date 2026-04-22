@@ -50,7 +50,7 @@ export const hi: LanguageStrings = {
   enterPickupAndDrop: '📍 पिकअप-ड्रॉप दर्ज',
   enterPickupPrompt: 'अपना पिकअप स्थान दर्ज करें, या लोकेशन पिन भेजें:',
   enterDropPrompt: 'अब अपना ड्रॉप स्थान दर्ज करें, या लोकेशन पिन भेजें:',
-  locationPinReceived: '📍 लोकेशन प्राप्त हुई',
+  locationPinReceived: (address: string) => `📍 लोकेशन प्राप्त हुई: ${address}`,
   favouriteLocations: 'या अपने सेव किए गए स्थानों में से चुनें:',
   addHome: '🏠 घर जोड़ें',
   addWork: '💼 ऑफ़िस जोड़ें',
