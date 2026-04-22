@@ -138,6 +138,91 @@ export class NammaYatriClient {
     this.token = token;
   }
 
+  // --- Dashboard registration APIs ---
+  // Uses /dashboard/{merchantId}/{city}/rideBooking/registration/* endpoints
+
+  /** Dashboard registration base URL */
+  private static get registrationBase(): string {
+    return `${config.nyDashboardUrl}/${config.nyDashboardMerchant}/${config.nyCity}/rideBooking/registration`;
+  }
+
+  /**
+   * POST /dashboard/{merchantId}/{city}/rideBooking/registration/auth
+   * Request OTP for a new or existing user. Returns authId needed for verify.
+   */
+  static async requestOtp(
+    mobileNumber: string,
+    _options?: { firstName?: string; lastName?: string; email?: string },
+  ): Promise<{ authId: string; attempts: number }> {
+    const url = `${NammaYatriClient.registrationBase}/auth`;
+    const body = {
+      mobileCountryCode: '+91',
+      mobileNumber,
+      otpChannel: 'SMS',
+    };
+
+    const res = await loggedFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: config.nyDashboardToken },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({} as any)) as any;
+      throw new Error(err.errorMessage || err.errorCode || `Request OTP failed: ${res.status}`);
+    }
+    const data = await res.json() as any;
+    return { authId: data.authId, attempts: data.attempts ?? 0 };
+  }
+
+  /**
+   * Resend OTP — re-calls the auth endpoint (dashboard API has no separate resend).
+   */
+  static async resendOtp(_authId: string, mobileNumber?: string): Promise<void> {
+    if (!mobileNumber) {
+      throw new Error('Phone number is required to resend OTP');
+    }
+    await NammaYatriClient.requestOtp(mobileNumber);
+  }
+
+  /**
+   * POST /dashboard/{merchantId}/{city}/rideBooking/registration/{authId}/verify
+   * Verify OTP, creates person if new. Returns token + person entity.
+   */
+  static async verifyOtp(
+    authId: string,
+    otp: string,
+  ): Promise<{ token: string; person: any }> {
+    const url = `${NammaYatriClient.registrationBase}/${authId}/verify`;
+    const res = await loggedFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: config.nyDashboardToken },
+      body: JSON.stringify({ otp, deviceToken: 'ny-connectors', whatsappNotificationEnroll: 'OPT_IN' }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({} as any)) as any;
+      throw new Error(err.errorMessage || `Verify OTP failed: ${res.status}`);
+    }
+    const data = await res.json() as any;
+    return { token: data.token, person: data.person };
+  }
+
+  /**
+   * POST /v2/profile — update profile (e.g. set firstName after registration).
+   */
+  async updateProfile(fields: { firstName?: string; lastName?: string; email?: string; gender?: string; language?: string }): Promise<void> {
+    const url = `${config.nyBaseUrl}/profile`;
+    const res = await loggedFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: this.token },
+      body: JSON.stringify(fields),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.error(`[profile] updateProfile failed ${res.status}: ${err.substring(0, 300)}`);
+      throw new Error(`Update profile failed: ${res.status}`);
+    }
+  }
+
   static async authenticate(mobileNumber: string): Promise<{ token: string; personId: string; person: any }> {
     const params = new URLSearchParams({
       mobileNumber,

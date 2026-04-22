@@ -29,6 +29,21 @@ export const hi: LanguageStrings = {
   couldNotReadPhone: 'आपका फ़ोन नंबर पढ़ नहीं पाए। कृपया दोबारा कोशिश करें।',
   allSet: 'सब तैयार है! चलिए राइड बुक करते हैं।',
 
+  // Registration (OTP-based)
+  personNotFound: 'लगता है आप नए हैं! चलिए आपका अकाउंट सेटअप करते हैं।',
+  otpSent: 'आपके फ़ोन पर OTP भेजा गया है। कृपया OTP दर्ज करें:',
+  enterOtp: 'अपने फ़ोन पर भेजा गया OTP दर्ज करें:',
+  invalidOtp: 'यह वैध OTP नहीं लगता। कृपया 4 या 6 अंकों का कोड दर्ज करें:',
+  resendOtp: '🔄 OTP दोबारा भेजें',
+  otpResent: 'OTP दोबारा भेजा गया है। कृपया अपना फ़ोन चेक करें:',
+  otpResendFailed: (err: string) => `OTP दोबारा नहीं भेज पाए: ${err}`,
+  otpVerified: 'फ़ोन सत्यापित हो गया!',
+  otpVerifyFailed: (err: string) => `OTP सत्यापन विफल: ${err}\nकृपया दोबारा कोशिश करें:`,
+  askName: 'आपका नाम क्या है? इससे ड्राइवर को आपको पहचानने में मदद मिलती है।',
+  skipName: '⏭️ छोड़ें',
+  nameUpdated: (name: string) => `धन्यवाद, ${name}! सब तैयार है।`,
+  nameUpdateFailed: 'नाम अपडेट नहीं हो पाया, लेकिन चिंता न करें — आप बुकिंग जारी रख सकते हैं।',
+
   // Origin & destination
   whereToGo: 'आप कहाँ जाना चाहेंगे?',
   whereToGoWithRoutes: 'आप कहाँ जाना चाहेंगे?\n\nक्विक रूट चुनें या कोई जगह चुनें।\nआप जगह का नाम भी टाइप कर सकते हैं:',

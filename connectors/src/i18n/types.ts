@@ -30,6 +30,21 @@ export interface LanguageStrings {
   couldNotReadPhone: string;
   allSet: string;
 
+  // Registration (OTP-based)
+  personNotFound: string;
+  otpSent: string;
+  enterOtp: string;
+  invalidOtp: string;
+  resendOtp: string;
+  otpResent: string;
+  otpResendFailed: (err: string) => string;
+  otpVerified: string;
+  otpVerifyFailed: (err: string) => string;
+  askName: string;
+  skipName: string;
+  nameUpdated: (name: string) => string;
+  nameUpdateFailed: string;
+
   // Origin & destination
   whereToGo: string;
   whereToGoWithRoutes: string;
