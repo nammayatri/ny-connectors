@@ -8,27 +8,42 @@ export class WhatsAppConnector implements Connector {
 
   verifyWebhook(req: Request): boolean {
     const signature = req.headers['x-hub-signature-256'] as string;
-    if (!signature) return false;
+    if (!signature) {
+      console.log('[whatsapp] verify failed: missing x-hub-signature-256 header');
+      return false;
+    }
 
     const rawBody = (req as any).rawBody;
-    if (!rawBody) return false;
+    if (!rawBody) {
+      console.log('[whatsapp] verify failed: rawBody not captured');
+      return false;
+    }
 
     // Extract phone_number_id from the payload to identify the merchant
     const phoneNumberId = req.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
     const merchant = phoneNumberId ? getMerchantByPhoneNumberId(phoneNumberId) : undefined;
     const appSecret = merchant?.whatsappAppSecret || config.whatsappAppSecret;
 
-    if (!appSecret) return false;
+    if (!appSecret) {
+      console.log(`[whatsapp] verify failed: no app secret (phoneNumberId=${phoneNumberId || 'none'}, merchant=${merchant?.id || 'unresolved'})`);
+      return false;
+    }
 
     const expected = 'sha256=' + crypto
       .createHmac('sha256', appSecret)
       .update(rawBody)
       .digest('hex');
 
-    return crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expected)
-    );
+    // Guard against timingSafeEqual throwing on length mismatch
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    const ok = sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
+
+    if (!ok) {
+      console.log(`[whatsapp] verify failed: signature mismatch (phoneNumberId=${phoneNumberId || 'none'}, merchant=${merchant?.id || 'unresolved'}, usingMerchantSecret=${!!merchant?.whatsappAppSecret}) — check MERCHANT_${merchant?.id || '?'}_WHATSAPP_APP_SECRET`);
+    }
+
+    return ok;
   }
 
   parseIncoming(req: Request): CommandMessage | null {
