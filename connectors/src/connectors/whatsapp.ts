@@ -7,6 +7,10 @@ export class WhatsAppConnector implements Connector {
   readonly source = 'whatsapp' as const;
 
   verifyWebhook(req: Request): boolean {
+    if (config.whatsappSkipVerify) {
+      console.warn('[whatsapp] ⚠️  signature verification BYPASSED (WHATSAPP_SKIP_VERIFY) — DEV ONLY, never enable in production');
+      return true;
+    }
     const signature = req.headers['x-hub-signature-256'] as string;
     if (!signature) {
       console.log('[whatsapp] verify failed: missing x-hub-signature-256 header');
@@ -63,7 +67,7 @@ export class WhatsAppConnector implements Connector {
 
     // Extract text from different message types
     let text = '';
-    let locationData: { latitude: number; longitude: number } | undefined;
+    let locationData: { latitude: number; longitude: number; name?: string; address?: string } | undefined;
     if (message.type === 'text') {
       text = message.text?.body || '';
     } else if (message.type === 'interactive') {
@@ -72,9 +76,13 @@ export class WhatsAppConnector implements Connector {
         || message.interactive?.list_reply?.id
         || '';
     } else if (message.type === 'location') {
+      // Keep name/address when the user shares a NAMED place (saved/POI) so we
+      // can prefer it over a reverse-geocode round-trip.
       locationData = {
         latitude: message.location?.latitude,
         longitude: message.location?.longitude,
+        name: message.location?.name,
+        address: message.location?.address,
       };
       text = '__location_pin__';
     } else {
@@ -166,11 +174,27 @@ export class WhatsAppConnector implements Connector {
     }
   }
 
+  // Sends the native WhatsApp "Send location" button (interactive
+  // location_request_message). The user's tap returns a normal `location`
+  // message, which parseIncoming already turns into '__location_pin__'.
+  async sendLocationRequest(chatId: string, text: string, merchant?: MerchantConfig): Promise<void> {
+    await this.sendWhatsApp(chatId, {
+      messaging_product: 'whatsapp',
+      to: chatId,
+      type: 'interactive',
+      interactive: {
+        type: 'location_request_message',
+        body: { text },
+        action: { name: 'send_location' },
+      },
+    }, merchant);
+  }
+
   private async sendWhatsApp(chatId: string, payload: any, merchant?: MerchantConfig): Promise<void> {
     const phoneNumberId = merchant?.whatsappPhoneNumberId || config.whatsappPhoneNumberId;
     const accessToken = merchant?.whatsappAccessToken || config.whatsappAccessToken;
 
-    const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
+    const url = `https://graph.facebook.com/v23.0/${phoneNumberId}/messages`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {

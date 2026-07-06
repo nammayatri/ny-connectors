@@ -147,6 +147,25 @@ export const kn: LanguageStrings = {
   markedSafe: '✅ ನಿಮ್ಮ ರೈಡ್ ಸುರಕ್ಷಿತ ಎಂದು ಗುರುತಿಸಲಾಗಿದೆ. SOS ಎಚ್ಚರಿಕೆ ರದ್ದಾಗಿದೆ.',
   markSafeFailed: (err: string) => `ಸುರಕ್ಷಿತ ಎಂದು ಗುರುತಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ: ${err}`,
 
+  // Flexi (location-only metered booking)
+  flexiWelcome: '🙏 ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ Namma Yatri ಸಹಾಯಕ\n\nಆಟೋ ಬುಕ್ ಮಾಡಲು ಸಿದ್ಧರಾ?',
+  flexiSharePrompt: 'ಚಾಲಕ ನಿಮ್ಮನ್ನು ಎಲ್ಲಿಂದ ಕರೆದೊಯ್ಯಬೇಕು? 📍',
+  flexiFareRate: (base: number, perKm: number) => `🛺 ಮೀಟರ್ ಆಟೋ · ₹${base} + ₹${perKm}/ಕಿಮೀ ಇಂದ`,
+  flexiConfirmPickup: (address: string) => `📍 ನಿಮ್ಮ ಸ್ಥಳ: *${address}* ಹತ್ತಿರ.\n\nಮುಂದುವರಿಯೋಣವೇ?`,
+  flexiConfirmSavedPlace: (name: string) => `📍 ನೀವು ಉಳಿಸಿದ ಸ್ಥಳವನ್ನು ಕಳುಹಿಸಿದ್ದೀರಿ:\n *${name}*.\nಮುಂದುವರಿಯೋಣವೇ?`,
+  flexiConfirmButton: '✅ ಪಿಕಪ್ ಖಚಿತಪಡಿಸಿ',
+  flexiAdjustButton: '✏️ ಸ್ಥಳ ಬದಲಿಸಿ',
+  flexiFinding: '🛺 ನಿಮ್ಮ ಹತ್ತಿರ ಆಟೋ ಹುಡುಕುತ್ತಿದ್ದೇವೆ…',
+  flexiStillFinding: (elapsed: number) => `⏳ ಇನ್ನೂ ನಿಮ್ಮ ಹತ್ತಿರ ಆಟೋ ಹುಡುಕುತ್ತಿದ್ದೇವೆ… (${elapsed} ಸೆ)\n\nನಿಲ್ಲಿಸಲು "cancel" ಕಳುಹಿಸಿ.`,
+  flexiCancelSearch: '❌ ಹುಡುಕಾಟ ನಿಲ್ಲಿಸಿ',
+  flexiFoundDriver: (name: string) => `🛺 *${name}* ಬರುತ್ತಿದ್ದಾರೆ.`,
+  flexiDriverMeta: (rating: number, etaMin: number) => `⭐ ${rating} · ${etaMin} ನಿಮಿಷ ದೂರ`,
+  flexiOtpShare: (otp: string) => `🔑 ಆರಂಭ OTP: *${otp}*`,
+  flexiCallDriver: (phone: string) => `📞 ಚಾಲಕರಿಗೆ ಕರೆ ಮಾಡಿ: ${phone}`,
+  flexiSafetyNote: 'ಚಾಲಕರೊಂದಿಗೆ ನಿಮ್ಮ ಗಮ್ಯಸ್ಥಾನವನ್ನು ಖಚಿತಪಡಿಸಿ.',
+  flexiNoAuto: '😔 ಸದ್ಯಕ್ಕೆ ನಿಮ್ಮ ಹತ್ತಿರ ಯಾವುದೇ ಆಟೋ ಲಭ್ಯವಿಲ್ಲ. ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
+  flexiTryAgain: '🔁 ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ',
+
   // Errors
   somethingWentWrong: 'ಏನೋ ತಪ್ಪಾಗಿದೆ. ಮತ್ತೆ ಪ್ರಾರಂಭಿಸಲು "book" ಕಳುಹಿಸಿ.',
   sessionExpired: 'ಸೆಶನ್ ಅವಧಿ ಮುಗಿದಿದೆ. ಮರು-ದೃಢೀಕರಿಸಲು "book" ಕಳುಹಿಸಿ.',

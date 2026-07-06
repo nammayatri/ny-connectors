@@ -108,6 +108,14 @@ export interface NYEstimate {
   estimatedPickupDuration?: number;
 }
 
+// A Flexi (MeterRide) quote. Flexi results come back as QUOTES (QuoteBased),
+// not on-demand estimates. `quoteId` is what we POST to confirm.
+export interface NYFlexiQuote {
+  quoteId: string;
+  serviceTierName?: string;
+  estimatedFare?: number;
+}
+
 export interface NYRideHistoryItem {
   id: string;
   status: string;
@@ -473,6 +481,76 @@ export class NammaYatriClient {
       totalFareRange: e.totalFareRange,
       estimatedPickupDuration: e.estimatedPickupDuration,
     }));
+  }
+
+  // -------------------------------------------------------------------------
+  // Flexi = OneWay MeterRide: pickup-only search, metered (base + ₹/km) fare
+  // priced server-side from actual distance. See the Flexi plan. NOTE: requires
+  // the NY backend to allow customer-originated meter-ride search
+  // (isMeterRideSearch) — until then this only works against NY_MOCK.
+  // -------------------------------------------------------------------------
+  async searchFlexi(origin: NYPlaceDetails): Promise<string> {
+    const body = {
+      contents: {
+        origin: {
+          gps: { lat: origin.lat, lon: origin.lon },
+          address: {
+            area: origin.address.area || '',
+            city: origin.address.city || '',
+            country: origin.address.country || '',
+            building: origin.address.building || '',
+            placeId: origin.placeId,
+            state: origin.address.state || '',
+          },
+        },
+        isSourceManuallyMoved: false,
+        isMeterRideSearch: true,
+        placeNameSource: 'API_MCP',
+        platformType: 'APPLICATION',
+      },
+      fareProductType: 'ONE_WAY',
+    };
+    const res = await loggedFetch(`${config.nyBaseUrl}/rideSearch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'is-dashboard-request': 'False', token: this.token },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({} as any)) as any;
+      const msg = err.errorMessage || err.errorCode || '';
+      throw new Error(`Flexi search failed: ${res.status}${msg ? ` — ${msg}` : ''}`);
+    }
+    const data = await res.json() as any;
+    console.log(`[searchFlexi] searchId=${data.searchId}`);
+    return data.searchId;
+  }
+
+  async getFlexiQuotes(searchId: string): Promise<NYFlexiQuote[]> {
+    const res = await loggedFetch(`${config.nyBaseUrl}/rideSearch/${searchId}/results`, {
+      headers: { 'Content-Type': 'application/json', token: this.token },
+    });
+    if (!res.ok) {
+      if (res.status === 400) return []; // still processing — keep polling
+      throw new Error(`Get flexi quotes failed: ${res.status}`);
+    }
+    const data = await res.json() as any;
+    return (data.quotes || []).map((q: any) => ({
+      quoteId: q.id,
+      serviceTierName: q.serviceTierName,
+      estimatedFare: q.estimatedFare,
+    }));
+  }
+
+  // Confirm a Flexi quote — classic BECKN confirm path (empty body). Returns the bookingId.
+  async confirmQuote(quoteId: string): Promise<string> {
+    const res = await loggedFetch(`${config.nyBaseUrl}/rideSearch/quotes/${quoteId}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: this.token },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) throw new Error(`Confirm quote failed: ${res.status}`);
+    const data = await res.json() as any;
+    return data.bookingId || data.id;
   }
 
   async selectEstimate(estimateId: string): Promise<void> {

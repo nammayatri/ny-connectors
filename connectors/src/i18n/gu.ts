@@ -147,6 +147,25 @@ export const gu: LanguageStrings = {
   markedSafe: '✅ તમારી રાઈડ સુરક્ષિત ચિહ્નિત કરાઈ છે. SOS અલર્ટ રદ થયો છે.',
   markSafeFailed: (err: string) => `સુરક્ષિત ચિહ્નિત કરી શકાયું નથી: ${err}`,
 
+  // Flexi (location-only metered booking)
+  flexiWelcome: '🙏 નમસ્તે! હું તમારો Namma Yatri સહાયક છું\n\nઓટો બુક કરવા તૈયાર છો?',
+  flexiSharePrompt: 'ડ્રાઈવર તમને ક્યાંથી લેશે? 📍',
+  flexiFareRate: (base: number, perKm: number) => `🛺 મીટર ઓટો · ₹${base} + ₹${perKm}/કિમીથી`,
+  flexiConfirmPickup: (address: string) => `📍 તમારું લોકેશન: *${address}* પાસે.\n\nઆગળ વધીએ?`,
+  flexiConfirmSavedPlace: (name: string) => `📍 તમે એક સેવ કરેલી જગ્યા મોકલી:\n *${name}*.\nઆગળ વધીએ?`,
+  flexiConfirmButton: '✅ પિકઅપ કન્ફર્મ કરો',
+  flexiAdjustButton: '✏️ જગ્યા બદલો',
+  flexiFinding: '🛺 તમારી નજીક ઓટો શોધી રહ્યા છીએ…',
+  flexiStillFinding: (elapsed: number) => `⏳ હજુ પણ તમારી નજીક ઓટો શોધી રહ્યા છીએ… (${elapsed} સેકંડ)\n\nરોકવા માટે "cancel" મોકલો.`,
+  flexiCancelSearch: '❌ શોધ રોકો',
+  flexiFoundDriver: (name: string) => `🛺 *${name}* આવી રહ્યા છે.`,
+  flexiDriverMeta: (rating: number, etaMin: number) => `⭐ ${rating} · ${etaMin} મિનિટ દૂર`,
+  flexiOtpShare: (otp: string) => `🔑 સ્ટાર્ટ OTP: *${otp}*`,
+  flexiCallDriver: (phone: string) => `📞 ડ્રાઈવરને કૉલ કરો: ${phone}`,
+  flexiSafetyNote: 'ડ્રાઈવર સાથે તમારું ગંતવ્ય કન્ફર્મ કરો.',
+  flexiNoAuto: '😔 અત્યારે તમારી નજીક કોઈ ઓટો ઉપલબ્ધ નથી. થોડી વારમાં ફરી પ્રયાસ કરો.',
+  flexiTryAgain: '🔁 ફરી પ્રયાસ કરો',
+
   // Errors
   somethingWentWrong: 'કંઈક ખોટું થયું. ફરીથી શરૂ કરવા "book" મોકલો.',
   sessionExpired: 'સત્ર સમાપ્ત થયું. ફરીથી પ્રમાણિત થવા "book" મોકલો.',

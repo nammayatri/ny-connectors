@@ -149,6 +149,25 @@ export const en: LanguageStrings = {
   markedSafe: '✅ Your ride has been marked as safe. The SOS alert has been cancelled.',
   markSafeFailed: (err: string) => `Could not mark as safe: ${err}`,
 
+  // Flexi (location-only metered booking)
+  flexiWelcome: "🙏 Namaskara! I'm your Namma Yatri assistant\n\nReady to book an auto?",
+  flexiSharePrompt: 'Where should the driver pick you up? 📍',
+  flexiFareRate: (base: number, perKm: number) => `🛺 Metered auto · from ₹${base} + ₹${perKm}/km`,
+  flexiConfirmPickup: (address: string) => `📍 Your location: near *${address}*.\n\nShall we go ahead?`,
+  flexiConfirmSavedPlace: (name: string) => `📍 You shared a saved place:\n *${name}*.\nShall we go ahead?.`,
+  flexiConfirmButton: '✅ Confirm pickup',
+  flexiAdjustButton: '✏️ Change location',
+  flexiFinding: '🛺 Finding an auto near you…',
+  flexiStillFinding: (elapsed: number) => `⏳ Still finding an auto near you… (${elapsed}s)\n\nSend "cancel" to stop.`,
+  flexiCancelSearch: '❌ Cancel search',
+  flexiFoundDriver: (name: string) => `🛺 *${name}* is on the way.`,
+  flexiDriverMeta: (rating: number, etaMin: number) => `⭐ ${rating} · ${etaMin} min away`,
+  flexiOtpShare: (otp: string) => `🔑 Start OTP: *${otp}*`,
+  flexiCallDriver: (phone: string) => `📞 Call driver: ${phone}`,
+  flexiSafetyNote: "Confirm your destination with the driver.",
+  flexiNoAuto: '😔 No auto available near you right now. Please try again in a bit.',
+  flexiTryAgain: '🔁 Try again',
+
   // Errors
   somethingWentWrong: 'Something went wrong. Send "book" to start over.',
   sessionExpired: 'Session expired. Send "book" to re-authenticate.',

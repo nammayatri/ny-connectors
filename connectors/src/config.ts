@@ -14,6 +14,9 @@ export interface MerchantConfig {
   nyDashboardMerchant: string;
   nyCity: string;
   nyTrackingUrl: string; // template with {rideId} placeholder
+  flexiEnabled: boolean;  // gate the location-only "Flexi" booking flow (Tumkur)
+  flexiBaseFare?: number; // display-only metered tariff, ₹ base (shown to riders)
+  flexiPerKm?: number;    // display-only metered tariff, ₹ per km
 }
 
 export interface Config {
@@ -24,6 +27,7 @@ export interface Config {
   whatsappAppSecret: string;
   whatsappAccessToken: string;
   whatsappPhoneNumberId: string;
+  whatsappSkipVerify: boolean;
   slackSigningSecret: string;
   slackBotToken: string;
   redisMode: RedisMode;
@@ -40,6 +44,10 @@ export interface Config {
   nyDashboardToken: string;
   nyDashboardMerchant: string;
   nyCity: string;
+  nyMock: boolean;
+  flexiEnabled: boolean;
+  flexiBaseFare?: number;
+  flexiPerKm?: number;
 }
 
 // Parses REDIS_CLUSTER_NODES env var: comma-separated host:port pairs.
@@ -72,6 +80,9 @@ export const config: Config = {
   whatsappAppSecret: process.env.WHATSAPP_APP_SECRET || '',
   whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
   whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+  // Dev-only: skip inbound webhook signature verification (use if the app secret
+  // is uncertain while testing through a tunnel). NEVER enable in production.
+  whatsappSkipVerify: /^(1|true|yes)$/i.test(process.env.WHATSAPP_SKIP_VERIFY || ''),
   slackSigningSecret: process.env.SLACK_SIGNING_SECRET || '',
   slackBotToken: process.env.SLACK_BOT_TOKEN || '',
   redisMode: resolveRedisMode(
@@ -91,6 +102,15 @@ export const config: Config = {
   nyDashboardToken: process.env.NY_DASHBOARD_TOKEN || '',
   nyDashboardMerchant: process.env.NY_DASHBOARD_MERCHANT || 'NAMMA_YATRI',
   nyCity: process.env.NY_CITY || 'std:080',
+  // Dev-only: when true, the NY API client is replaced by an in-memory mock
+  // (canned auth/places/estimates, no-op booking). No real calls, no dispatch.
+  nyMock: /^(1|true|yes)$/i.test(process.env.NY_MOCK || ''),
+  // Rollout flag for the location-only Flexi flow. Global default for the legacy
+  // single merchant; override per-merchant via MERCHANT_{ID}_FLEXI_ENABLED.
+  flexiEnabled: /^(1|true|yes)$/i.test(process.env.FLEXI_ENABLED || ''),
+  // Display-only metered tariff for the Flexi fare line (never used to compute a fare).
+  flexiBaseFare: process.env.FLEXI_BASE_FARE ? parseFloat(process.env.FLEXI_BASE_FARE) : undefined,
+  flexiPerKm: process.env.FLEXI_PER_KM ? parseFloat(process.env.FLEXI_PER_KM) : undefined,
 };
 
 // ---------------------------------------------------------------------------
@@ -126,6 +146,9 @@ function loadMerchants(): void {
       nyDashboardMerchant: process.env[`${p}NY_DASHBOARD_MERCHANT`] || '',
       nyCity: process.env[`${p}NY_CITY`] || '',
       nyTrackingUrl: process.env[`${p}NY_TRACKING_URL`] || 'https://www.nammayatri.in/u?vp=shareRide&rideId={rideId}',
+      flexiEnabled: /^(1|true|yes)$/i.test(process.env[`${p}FLEXI_ENABLED`] || String(config.flexiEnabled)),
+      flexiBaseFare: process.env[`${p}FLEXI_BASE_FARE`] ? parseFloat(process.env[`${p}FLEXI_BASE_FARE`] as string) : config.flexiBaseFare,
+      flexiPerKm: process.env[`${p}FLEXI_PER_KM`] ? parseFloat(process.env[`${p}FLEXI_PER_KM`] as string) : config.flexiPerKm,
     };
     if (cfg.whatsappPhoneNumberId) {
       merchantsById.set(id, cfg);
@@ -147,6 +170,9 @@ function loadMerchants(): void {
       nyDashboardMerchant: config.nyDashboardMerchant,
       nyCity: config.nyCity,
       nyTrackingUrl: 'https://www.nammayatri.in/u?vp=shareRide&rideId={rideId}',
+      flexiEnabled: config.flexiEnabled,
+      flexiBaseFare: config.flexiBaseFare,
+      flexiPerKm: config.flexiPerKm,
     };
     merchantsById.set('default', fallback);
     merchantsByPhoneNumberId.set(config.whatsappPhoneNumberId, fallback);

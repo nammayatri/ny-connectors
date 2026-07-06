@@ -147,6 +147,25 @@ export const ta: LanguageStrings = {
   markedSafe: '✅ உங்கள் சவாரி பாதுகாப்பானது எனக் குறிக்கப்பட்டது. SOS எச்சரிக்கை ரத்து செய்யப்பட்டது.',
   markSafeFailed: (err: string) => `பாதுகாப்பானது எனக் குறிக்க இயலவில்லை: ${err}`,
 
+  // Flexi (location-only metered booking)
+  flexiWelcome: '🙏 வணக்கம்! நான் உங்கள் Namma Yatri உதவியாளர்\n\nஆட்டோ புக் செய்ய தயாரா?',
+  flexiSharePrompt: 'டிரைவர் உங்களை எங்கிருந்து அழைத்துச் செல்ல வேண்டும்? 📍',
+  flexiFareRate: (base: number, perKm: number) => `🛺 மீட்டர் ஆட்டோ · ₹${base} + ₹${perKm}/கிமீ முதல்`,
+  flexiConfirmPickup: (address: string) => `📍 உங்கள் இருப்பிடம்: *${address}* அருகில்.\n\nதொடரலாமா?`,
+  flexiConfirmSavedPlace: (name: string) => `📍 நீங்கள் சேமித்த இடத்தை அனுப்பியுள்ளீர்கள்:\n *${name}*.\nதொடரலாமா?`,
+  flexiConfirmButton: '✅ பிக்அப்பை உறுதிப்படுத்து',
+  flexiAdjustButton: '✏️ இடத்தை மாற்று',
+  flexiFinding: '🛺 உங்களுக்கு அருகில் ஆட்டோ தேடுகிறோம்…',
+  flexiStillFinding: (elapsed: number) => `⏳ இன்னும் உங்களுக்கு அருகில் ஆட்டோ தேடுகிறோம்… (${elapsed} வி)\n\nநிறுத்த "cancel" அனுப்பவும்.`,
+  flexiCancelSearch: '❌ தேடலை நிறுத்து',
+  flexiFoundDriver: (name: string) => `🛺 *${name}* வந்து கொண்டிருக்கிறார்.`,
+  flexiDriverMeta: (rating: number, etaMin: number) => `⭐ ${rating} · ${etaMin} நிமிடம் தொலைவில்`,
+  flexiOtpShare: (otp: string) => `🔑 தொடக்க OTP: *${otp}*`,
+  flexiCallDriver: (phone: string) => `📞 டிரைவரை அழைக்கவும்: ${phone}`,
+  flexiSafetyNote: 'டிரைவரிடம் உங்கள் சேருமிடத்தை உறுதிப்படுத்துங்கள்.',
+  flexiNoAuto: '😔 இப்போது உங்களுக்கு அருகில் ஆட்டோ எதுவும் இல்லை. சிறிது நேரத்தில் மீண்டும் முயற்சிக்கவும்.',
+  flexiTryAgain: '🔁 மீண்டும் முயற்சிக்கவும்',
+
   // Errors
   somethingWentWrong: 'ஏதோ தவறு ஏற்பட்டது. மீண்டும் தொடங்க "book" அனுப்பவும்.',
   sessionExpired: 'அமர்வு காலாவதியானது. மீண்டும் அங்கீகரிக்க "book" அனுப்பவும்.',

@@ -149,6 +149,25 @@ export interface LanguageStrings {
   markedSafe: string;
   markSafeFailed: (err: string) => string;
 
+  // Flexi (location-only metered booking)
+  flexiWelcome: string;
+  flexiSharePrompt: string;
+  flexiFareRate: (base: number, perKm: number) => string;
+  flexiConfirmPickup: (address: string) => string;
+  flexiConfirmSavedPlace: (name: string) => string;
+  flexiConfirmButton: string;
+  flexiAdjustButton: string;
+  flexiFinding: string;
+  flexiStillFinding: (elapsed: number) => string;
+  flexiCancelSearch: string;
+  flexiFoundDriver: (name: string) => string;
+  flexiDriverMeta: (rating: number, etaMin: number) => string;
+  flexiOtpShare: (otp: string) => string;
+  flexiCallDriver: (phone: string) => string;
+  flexiSafetyNote: string;
+  flexiNoAuto: string;
+  flexiTryAgain: string;
+
   // Errors
   somethingWentWrong: string;
   sessionExpired: string;

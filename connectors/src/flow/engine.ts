@@ -1,5 +1,5 @@
 import { FlowContext, INITIAL_CONTEXT } from './states';
-import { NammaYatriClient, NYPlaceDetails, NYRideHistoryItem } from '../ny';
+import { NammaYatriClient, NYPlaceDetails, NYFlexiQuote, NYRideHistoryItem } from '../ny';
 import { SessionManager } from '../session/manager';
 import { MemorySessionManager } from '../session/memory-store';
 import { TokenStore } from '../session/token-store';
@@ -34,6 +34,20 @@ const POLLING_NOTIFY_EVERY = 10;         // notify every 10 × 3s = 30s
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// Normalize a phone number so WhatsApp auto-linkifies it into a tap-to-dial link.
+// WhatsApp only reliably linkifies numbers in +CC international form, so a bare
+// 10-digit Indian mobile becomes +91XXXXXXXXXX. Landline-form numbers (e.g. a
+// masked exophone starting with 0) are returned as-is (best-effort fallback).
+function formatDialable(phone?: string): string | undefined {
+  if (!phone) return undefined;
+  const d = phone.replace(/[^0-9]/g, '');
+  if (!d) return undefined;
+  if (d.length === 10) return `+91${d}`;
+  if (d.length === 12 && d.startsWith('91')) return `+${d}`;
+  if (d.startsWith('0')) return phone;
+  return `+${d}`;
 }
 
 export class FlowEngine {
@@ -146,13 +160,17 @@ export class FlowEngine {
 
       if (input === 'main_menu') {
         await this.resetContext(message);
-        await replyWithButtons(
-          s.welcomeBack,
-          [[
-            { text: s.bookARide, data: 'book' },
-            { text: s.trackRide, data: 'status' },
-          ]]
-        );
+        if (this.isFlexi(message)) {
+          await replyWithButtons(s.flexiWelcome, [[{ text: s.bookARide, data: 'book' }]]);
+        } else {
+          await replyWithButtons(
+            s.welcomeBack,
+            [[
+              { text: s.bookARide, data: 'book' },
+              { text: s.trackRide, data: 'status' },
+            ]]
+          );
+        }
         return;
       }
 
@@ -290,6 +308,19 @@ export class FlowEngine {
         return;
       }
 
+      // FLEXI: confirm/adjust the shared pickup (screen 04). Top-level so they
+      // work regardless of the resumed state after a session hydrate.
+      if (input === 'flexi_confirm' && ctx.nyToken && ctx.origin && ctx.state === 'CONFIRMING_FLEXI_LOCATION') {
+        // Guard on state so a double-tap can't launch two searches/bookings.
+        await this.startFlexiSearch(ctx, message, reply, replyWithButtons);
+        return;
+      }
+      if (input === 'flexi_adjust') {
+        // "Change location" → re-open location sharing directly, as a minimal bubble.
+        await this.promptForFlexiLocation(ctx, message, reply, connector, { suppressFare: true });
+        return;
+      }
+
       if (input === 'call_driver' && ctx.nyToken) {
         const client = new NammaYatriClient(ctx.nyToken);
         const createdAfter = ctx.selectStartedAt ? new Date(ctx.selectStartedAt) : undefined;
@@ -341,6 +372,15 @@ export class FlowEngine {
         return;
       }
 
+      // FLEXI: a shared location pin (from IDLE or the flexi prompt) starts the
+      // location-only booking. Bypasses the pickup→drop pin handlers, which the
+      // flexi flow never reaches.
+      if (this.isFlexi(message) && input === '__location_pin__' &&
+          (ctx.state === 'IDLE' || ctx.state === 'AWAITING_FLEXI_LOCATION' || ctx.state === 'CONFIRMING_FLEXI_LOCATION')) {
+        await this.handleFlexiLocation(ctx, message, reply, replyWithButtons, connector);
+        return;
+      }
+
       switch (ctx.state) {
         case 'IDLE':
           await this.handleIdle(ctx, input, message, reply, replyWithButtons, connector);
@@ -371,6 +411,15 @@ export class FlowEngine {
           break;
         case 'BOOKING':
           await reply(s.rideBeingBooked);
+          break;
+        case 'AWAITING_FLEXI_LOCATION':
+          await this.promptForFlexiLocation(ctx, message, reply, connector);
+          break;
+        case 'CONFIRMING_FLEXI_LOCATION':
+          await this.sendFlexiConfirm(ctx, message, replyWithButtons);
+          break;
+        case 'FLEXI_SEARCHING':
+          await reply(s.flexiFinding);
           break;
         case 'TRACKING':
           await this.handleTracking(ctx, message, reply, replyWithButtons);
@@ -433,14 +482,18 @@ export class FlowEngine {
         await this.handleQuickRoute(ctx, quickMatch[1], quickMatch[2], msg, reply, replyWithButtons);
         return;
       }
-      await replyWithButtons(
-        s.welcomeMessage,
-        [[
-          { text: s.bookARide, data: 'book' },
-          { text: s.trackRide, data: 'status' },
-          { text: s.chooseLanguage, data: 'choose_language' },
-        ]]
-      );
+      if (this.isFlexi(msg)) {
+        await replyWithButtons(s.flexiWelcome, [[{ text: s.bookARide, data: 'book' }]]);
+      } else {
+        await replyWithButtons(
+          s.welcomeMessage,
+          [[
+            { text: s.bookARide, data: 'book' },
+            { text: s.trackRide, data: 'status' },
+            { text: s.chooseLanguage, data: 'choose_language' },
+          ]]
+        );
+      }
       return;
     }
 
@@ -457,7 +510,7 @@ export class FlowEngine {
           ctx.savedLocations = await client.getSavedLocations();
           await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
         } catch {}
-        await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+        await this.promptForBookingEntry(ctx, msg, reply, replyWithButtons, connector);
         return;
       }
 
@@ -488,8 +541,9 @@ export class FlowEngine {
             language: ctx.language,
           });
 
-          await reply(s.allSet);
-          await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+          // Flexi jumps straight to the location prompt — skip the extra "all set" bubble.
+          if (!this.isFlexi(msg)) await reply(s.allSet);
+          await this.promptForBookingEntry(ctx, msg, reply, replyWithButtons, connector);
         } catch (err: any) {
           if (this.isPersonNotFound(err)) {
             await this.startRegistration(ctx, autoPhone, msg, reply, replyWithButtons);
@@ -519,7 +573,7 @@ export class FlowEngine {
       return;
     }
 
-    await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+    await this.promptForBookingEntry(ctx, msg, reply, replyWithButtons, connector);
   }
 
   private async handleChooseLanguage(
@@ -695,6 +749,304 @@ export class FlowEngine {
         await this.saveContext(msg, ctx);
       }
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Flexi (location-only metered booking)
+  // -------------------------------------------------------------------------
+
+  /** The configured metered-tariff line ("🛺 Metered auto · from ₹40 + ₹12/km"),
+   *  or undefined when the merchant has no fare rate set. Display-only. */
+  private flexiFareLine(ctx: FlowContext, msg: CommandMessage): string | undefined {
+    const m = this.getMerchantConfig(msg);
+    const base = m?.flexiBaseFare;
+    const perKm = m?.flexiPerKm;
+    // Number.isFinite rejects undefined AND NaN (a malformed env value), so a
+    // bad config omits the line rather than rendering "₹NaN".
+    if (!Number.isFinite(base) || !Number.isFinite(perKm)) return undefined;
+    return t(ctx.language).flexiFareRate(base as number, perKm as number);
+  }
+
+  /** Route a "start booking" entrypoint to the flexi (location-only) flow when
+   *  the merchant has FLEXI enabled, otherwise the classic pickup→drop flow. */
+  private async promptForBookingEntry(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
+  ) {
+    if (ctx.pendingAction === 'status') {
+      ctx.pendingAction = undefined;
+      await this.saveContext(msg, ctx);
+      await this.handleStatus(ctx, msg, reply, replyWithButtons);
+      return;
+    }
+    if (this.isFlexi(msg)) {
+      await this.promptForFlexiLocation(ctx, msg, reply, connector);
+      return;
+    }
+    await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+  }
+
+  /** Ask the user to share their current location. On WhatsApp this uses the
+   *  native "Send location" button; elsewhere it falls back to a text prompt. */
+  private async promptForFlexiLocation(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    connector?: Connector,
+    opts?: { suppressFare?: boolean },
+  ) {
+    const s = t(ctx.language);
+    ctx.state = 'AWAITING_FLEXI_LOCATION';
+    await this.saveContext(msg, ctx);
+    // On a "Change location" re-prompt, suppress the fare line (already shown) so the
+    // bubble is minimal — its native Send-location button is what opens the map.
+    const fare = opts?.suppressFare ? undefined : this.flexiFareLine(ctx, msg);
+    const body = fare ? `${s.flexiSharePrompt}\n\n${fare}` : s.flexiSharePrompt;
+    if (connector instanceof WhatsAppConnector) {
+      const chatId = this.getReplyTarget(msg, connector);
+      await connector.sendLocationRequest(chatId, body, this.getMerchantConfig(msg));
+    } else {
+      await reply(`${body}\n\n📎 → Location → Send your current location`);
+    }
+  }
+
+  /** Handle a shared location pin for a Flexi booking: auto-auth, search a
+   *  metered (MeterRide) ride, confirm, poll for a driver, show the driver card. */
+  private async handleFlexiLocation(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
+  ) {
+    const s = t(ctx.language);
+    const location = msg.metadata?.location as
+      { latitude: number; longitude: number; name?: string; address?: string } | undefined;
+    if (!location) {
+      await this.promptForFlexiLocation(ctx, msg, reply, connector);
+      return;
+    }
+
+    // Ensure authenticated (silent auto-auth from the WhatsApp number).
+    if (!ctx.nyToken) {
+      const stored = await this.tokenStore.get(this.scopedUserKey(msg));
+      if (stored) {
+        ctx.nyToken = stored.nyToken;
+        ctx.savedLocations = stored.savedLocations;
+      } else {
+        const phone = this.extractPhoneFromChannel(msg);
+        if (!phone) {
+          await reply(s.sessionExpired);
+          ctx.state = 'IDLE';
+          await this.saveContext(msg, ctx);
+          return;
+        }
+        try {
+          const merchant = this.getMerchantConfig(msg);
+          const { token, personId } = await NammaYatriClient.authenticate(phone, merchant);
+          ctx.nyToken = token;
+          ctx.personId = personId;
+          ctx.phone = phone;
+          await this.tokenStore.set(this.scopedUserKey(msg), {
+            nyToken: token,
+            personId,
+            phone,
+            savedLocations: ctx.savedLocations,
+            authenticatedAt: new Date().toISOString(),
+            language: ctx.language,
+          });
+        } catch (err: any) {
+          // New-user onboarding (language/name/OTP) is Phase 2 — for now, ask
+          // the user to start over rather than dispatch a bad request.
+          console.warn(`[flexi] auth failed: ${err.message}`);
+          await reply(s.sessionExpired);
+          ctx.state = 'IDLE';
+          await this.saveContext(msg, ctx);
+          return;
+        }
+      }
+    }
+
+    const client = new NammaYatriClient(ctx.nyToken!);
+
+    // Resolve the pin to a place (prefer a shared name/address over reverse-geocode).
+    let origin: NYPlaceDetails;
+    try {
+      origin = await client.reverseGeocode(location.latitude, location.longitude);
+    } catch {
+      origin = {
+        lat: location.latitude,
+        lon: location.longitude,
+        placeId: `${location.latitude},${location.longitude}`,
+        address: {},
+      };
+    }
+    if ((location.name || location.address) && !origin.address.area) {
+      origin.address = { ...origin.address, area: location.name || location.address };
+    }
+    ctx.origin = origin;
+    // Don't dispatch yet — confirm the pickup first (PDF screen 04). If the
+    // user shared a NAMED/saved place, location.name is set (a live "current
+    // location" share has none) → warn it may not be where they physically are.
+    await this.sendFlexiConfirm(ctx, msg, replyWithButtons, location.name);
+  }
+
+  /** Show the pickup confirmation (address + Confirm/Change buttons). When the
+   *  shared location was a named/saved place, warn it may not be the live spot. */
+  private async sendFlexiConfirm(
+    ctx: FlowContext, msg: CommandMessage,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    namedPlace?: string,
+  ) {
+    const s = t(ctx.language);
+    ctx.state = 'CONFIRMING_FLEXI_LOCATION';
+    await this.saveContext(msg, ctx);
+    const label = namedPlace
+      || ctx.origin?.address?.area
+      || (ctx.origin ? formatAddress(ctx.origin) : '')
+      || 'your shared location';
+    const body = namedPlace ? s.flexiConfirmSavedPlace(namedPlace) : s.flexiConfirmPickup(label);
+    await replyWithButtons(body, [
+      [{ text: s.flexiConfirmButton, data: 'flexi_confirm' }],
+      [{ text: s.flexiAdjustButton, data: 'flexi_adjust' }],
+    ]);
+  }
+
+  /** Run the metered (MeterRide) search once pickup is confirmed:
+   *  search (pickup-only) → quotes → confirm → poll for a driver → show the card. */
+  private async startFlexiSearch(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+  ) {
+    const s = t(ctx.language);
+    if (!ctx.nyToken || !ctx.origin) {
+      await this.promptForFlexiLocation(ctx, msg, reply);
+      return;
+    }
+    const client = new NammaYatriClient(ctx.nyToken);
+    ctx.state = 'FLEXI_SEARCHING';
+    ctx.cancelRequested = false;
+    await this.saveContext(msg, ctx);
+
+    const fare = this.flexiFareLine(ctx, msg);
+    await replyWithButtons(
+      fare ? `${s.flexiFinding}\n${fare}` : s.flexiFinding,
+      [[{ text: s.flexiCancelSearch, data: 'cancel' }]],
+    );
+
+    let bookingId: string | null = null;
+    try {
+      const searchId = await client.searchFlexi(ctx.origin);
+      ctx.flexiSearchId = searchId;
+      let quotes: NYFlexiQuote[] = [];
+      for (let i = 0; i < 5; i++) {
+        quotes = await client.getFlexiQuotes(searchId);
+        if (quotes.length) break;
+        await sleep(2000);
+      }
+      if (!quotes.length) {
+        await this.flexiNoAuto(ctx, msg, replyWithButtons);
+        return;
+      }
+      ctx.flexiQuoteId = quotes[0].quoteId;
+      await this.saveContext(msg, ctx);
+      bookingId = await client.confirmQuote(quotes[0].quoteId);
+    } catch (err: any) {
+      console.error(`[flexi] search/confirm failed: ${err.message}`);
+      await this.flexiNoAuto(ctx, msg, replyWithButtons);
+      return;
+    }
+
+    // Re-read the context: a "Cancel search" tap can land during the blocking
+    // search/confirm above. Honor it rather than clobbering the flag with a
+    // stale write (which would leave a phantom booking after a cancel).
+    const afterConfirm = await this.getContext(msg);
+    if (afterConfirm.cancelRequested || afterConfirm.state === 'IDLE') return;
+    const searchStartedAt = new Date();
+    afterConfirm.flexiSearchId = ctx.flexiSearchId;
+    afterConfirm.flexiQuoteId = ctx.flexiQuoteId;
+    afterConfirm.flexiBookingId = bookingId || undefined;
+    afterConfirm.activeBookingId = bookingId || undefined;
+    afterConfirm.selectStartedAt = searchStartedAt.toISOString();
+    afterConfirm.state = 'TRACKING';
+    await this.saveContext(msg, afterConfirm);
+
+    // Poll for driver assignment (same cadence as the estimate flow).
+    const POLL_ATTEMPTS = 90;
+    const POLL_INTERVAL = 2000;
+    const POLL_NOTIFY_EVERY = 15;
+    let foundBooking: any = null;
+    for (let i = 0; i < POLL_ATTEMPTS; i++) {
+      const freshCtx = await this.getContext(msg);
+      if (freshCtx.cancelRequested || freshCtx.state === 'IDLE') return;
+      try {
+        const bookings = await client.getActiveBookings(searchStartedAt);
+        const b = bookingId
+          ? (bookings.find((x: any) => x.id === bookingId) || bookings[0])
+          : bookings[0];
+        if (b?.rideList?.[0]?.driverName) {
+          foundBooking = b;
+          freshCtx.activeBookingId = b.id;
+          await this.saveContext(msg, freshCtx);
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`[flexi] poll error (attempt ${i + 1}): ${err.message}`);
+      }
+      if (i > 0 && i % POLL_NOTIFY_EVERY === 0) {
+        await reply(s.flexiStillFinding(Math.round(((i + 1) * POLL_INTERVAL) / 1000)));
+      }
+      await sleep(POLL_INTERVAL);
+    }
+
+    if (foundBooking) {
+      await this.sendFlexiDriverCard(foundBooking, msg, reply, replyWithButtons);
+    } else {
+      await this.flexiNoAuto(ctx, msg, replyWithButtons);
+    }
+  }
+
+  /** Render the "auto found" card (driver, rating/ETA, OTP, tappable dial number). */
+  private async sendFlexiDriverCard(
+    booking: any, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+  ) {
+    const ctx = await this.getContext(msg);
+    const s = t(ctx.language);
+    const ride = booking.rideList?.[0];
+    const driverName = ride?.driverName || booking.driverName || '';
+    const vehicleNumber = ride?.vehicleNumber || booking.vehicleNumber;
+    // Prefer the driver's mobile for the tap-to-dial link; the masked exophone is
+    // a landline-form fallback that WhatsApp won't linkify as a mobile.
+    const dial = formatDialable(ride?.driverNumber || booking.driverNumber || ride?.merchantExoPhone || booking.merchantExoPhone);
+    const otp = ride?.rideOtp || booking.rideOtp;
+    const rating = ride?.rating ?? booking.rating;
+    const etaMin = ride?.etaMinutes ?? booking.etaMinutes;
+
+    const lines: string[] = [s.flexiFoundDriver(driverName)];
+    if (rating != null && etaMin != null) lines.push(s.flexiDriverMeta(rating, etaMin));
+    if (vehicleNumber) lines.push(s.vehicleLabel(vehicleNumber));
+    if (otp) lines.push('', s.flexiOtpShare(otp));
+    if (dial) lines.push('', s.flexiCallDriver(dial)); // the tappable +91 number IS the dialer
+    lines.push('', s.flexiSafetyNote);
+
+    // No "Call Driver" button — the +91 number above opens the dialer directly.
+    await replyWithButtons(lines.join('\n'), [
+      [{ text: s.cancelRide, data: `cancel_confirm:${booking.id}` }],
+    ]);
+  }
+
+  /** No auto available — reset to idle and offer a retry. */
+  private async flexiNoAuto(
+    ctx: FlowContext, msg: CommandMessage,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+  ) {
+    const s = t(ctx.language);
+    ctx.state = 'IDLE';
+    await this.saveContext(msg, ctx);
+    await replyWithButtons(s.flexiNoAuto, [[{ text: s.flexiTryAgain, data: 'book' }]]);
   }
 
   private async promptForOrigin(
@@ -1689,13 +2041,15 @@ export class FlowEngine {
   ) {
     const ctx = await this.getContext(msg);
     const s = t(ctx.language);
-    await replyWithButtons(
-      `${prefix}${s.whatToDo}`,
-      [[
-        { text: s.bookARide, data: 'book' },
-        { text: s.trackRide, data: 'status' },
-      ]]
-    );
+    // Flexi is button-only and self-contained — never offer the (non-flexi)
+    // Track Ride path, which would drop the rider out of the flexi surface.
+    const buttons = this.isFlexi(msg)
+      ? [[{ text: s.bookARide, data: 'book' }]]
+      : [[
+          { text: s.bookARide, data: 'book' },
+          { text: s.trackRide, data: 'status' },
+        ]];
+    await replyWithButtons(`${prefix}${s.whatToDo}`, buttons);
   }
 
   private async resetContext(msg: CommandMessage): Promise<void> {
@@ -1935,6 +2289,11 @@ export class FlowEngine {
   /** Extract MerchantConfig from message metadata (set by WhatsApp connector) */
   private getMerchantConfig(msg: CommandMessage): MerchantConfig | undefined {
     return msg.metadata?.merchantConfig as MerchantConfig | undefined;
+  }
+
+  /** Whether the Flexi (location-only metered) flow is enabled for this merchant. */
+  private isFlexi(msg: CommandMessage): boolean {
+    return this.getMerchantConfig(msg)?.flexiEnabled === true;
   }
 
   /** Build a merchant-scoped user key for session/token store lookups.

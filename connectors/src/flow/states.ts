@@ -10,6 +10,9 @@ export type FlowState =
   | 'AWAITING_DESTINATION'
   | 'CONFIRMING_DESTINATION'
   | 'SEARCHING_RIDES'
+  | 'AWAITING_FLEXI_LOCATION'
+  | 'CONFIRMING_FLEXI_LOCATION'
+  | 'FLEXI_SEARCHING'
   | 'SHOWING_ESTIMATES'
   | 'BOOKING'
   | 'TRACKING'
@@ -46,6 +49,10 @@ export interface FlowContext {
   language?: SupportedLanguage;
   authId?: string;             // from POST /v2/auth during registration
   pendingAction?: 'status';    // deferred action to run after authentication
+  // Flexi (location-only metered booking)
+  flexiSearchId?: string;
+  flexiQuoteId?: string;
+  flexiBookingId?: string;
 }
 
 export const INITIAL_CONTEXT: FlowContext = {
