@@ -1,14 +1,16 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { TelegramConnector, WhatsAppConnector, SlackConnector } from './connectors';
 import { Connector } from './connectors/types';
-import { createSessionManager, createTokenStore } from './session';
+import { createSessionManager, createTokenStore, createRideRegistry } from './session';
 import { FlowEngine } from './flow';
+import { RideTracker } from './tracking/ride-tracker';
 import { config, getAllMerchants } from './config';
 
 const app = express();
 const sessionManager = createSessionManager();
 const tokenStore = createTokenStore();
-const flowEngine = new FlowEngine(sessionManager as any, tokenStore);
+const rideRegistry = createRideRegistry();
+const flowEngine = new FlowEngine(sessionManager as any, tokenStore, rideRegistry);
 
 // Capture raw body for signature verification
 app.use(express.json({
@@ -62,6 +64,17 @@ app.post('/webhook/telegram', (req, res) => { handleIncoming(telegram, req, res)
 // --- WhatsApp ---
 const whatsapp = new WhatsAppConnector();
 
+// Background ride-progress tracker (Flexi): watches confirmed bookings through
+// arrived → started → ended and pushes WhatsApp updates. Survives restarts via
+// the durable ride registry. WhatsApp is the only Flexi channel today.
+const rideTracker = new RideTracker({
+  registry: rideRegistry,
+  tokenStore,
+  sessionManager: sessionManager as any,
+  whatsapp,
+});
+if (config.flexiTrackEnabled) rideTracker.start();
+
 app.get('/webhook/whatsapp', (req: Request, res: Response) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -106,8 +119,10 @@ app.post('/webhook/slack/interactions', express.urlencoded({
 });
 
 const shutdown = async () => {
+  rideTracker.stop();
   await sessionManager.disconnect();
   await tokenStore.disconnect();
+  await rideRegistry.disconnect();
 };
 
 export { app, shutdown };

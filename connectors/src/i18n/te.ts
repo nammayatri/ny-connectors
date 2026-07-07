@@ -163,8 +163,28 @@ export const te: LanguageStrings = {
   flexiOtpShare: (otp: string) => `🔑 స్టార్ట్ OTP: *${otp}*`,
   flexiCallDriver: (phone: string) => `📞 డ్రైవర్‌కు కాల్ చేయండి: ${phone}`,
   flexiSafetyNote: 'డ్రైవర్‌తో మీ గమ్యస్థానాన్ని నిర్ధారించుకోండి.',
-  flexiNoAuto: '😔 ప్రస్తుతం మీ దగ్గర ఆటో అందుబాటులో లేదు. కొద్దిసేపటి తర్వాత మళ్లీ ప్రయత్నించండి.',
+  flexiNoAuto: '😔 ప్రస్తుతం మీ దగ్గర ఆటో అందుబాటులో లేదు. దయచేసి మళ్లీ ప్రయత్నించండి.',
   flexiTryAgain: '🔁 మళ్లీ ప్రయత్నించండి',
+  flexiOutOfArea: (area: string) => `📍 ఈ ప్రదేశం మా సేవా ప్రాంతం వెలుపల ఉంది.\n\nNamma Yatri ఆటోలు ప్రస్తుతం *${area}* లో అందుబాటులో ఉన్నాయి. అక్కడి నుండి పికప్ ప్రయత్నించండి, లేదా కొద్దిసేపటి తర్వాత చూడండి.`,
+
+  // Flexi ride-progress updates (pushed by the background tracker)
+  flexiArrived: (otp: string) => otp
+    ? `🛺 మీ ఆటో వచ్చేసింది!\nరైడ్ ప్రారంభించడానికి డ్రైవర్‌కు OTP చెప్పండి.\n\n🔑 OTP: *${otp}* `
+    : '🛺 మీ ఆటో వచ్చేసింది!\nదయచేసి పికప్ పాయింట్ వద్ద మీ డ్రైవర్‌ను కలవండి.',
+  flexiRideStarted: "🚦 రైడ్ ప్రారంభమైంది! ప్రయాణాన్ని ఆస్వాదించండి.\n\nమీ గమ్యస్థానానికి చేరుకున్నారా? క్రింద *రైడ్ ముగించండి* నొక్కండి",
+  flexiFareFinal: (amount: number, km?: number) =>
+    km != null ? `💰 మొత్తం ఛార్జీ: *₹${amount}* · ${km} కిమీ` : `💰 మొత్తం ఛార్జీ: *₹${amount}*`,
+  flexiFareUnavailable: '💰 మీ ఛార్జీ త్వరలో నిర్ధారించబడుతుంది.',
+  flexiRideEnded: (fareLine: string) => `🎉 రైడ్ పూర్తయింది!\n\n${fareLine}\n\n🙏 Namma Yatri తో ప్రయాణించినందుకు ధన్యవాదాలు.`,
+  flexiRideCancelled: '❌ మీ రైడ్ రద్దు చేయబడింది.\n\nఎక్కడికైనా వెళ్లాలా? ఎప్పుడైనా మరో ఆటో బుక్ చేయండి.',
+  flexiBookAnother: '🛺 మరొకటి బుక్ చేయండి',
+
+  // Flexi end-ride OTP (rental)
+  flexiEndRideButton: '🏁 రైడ్ ముగించండి',
+  flexiEndOtpShare: (otp: string) => `🏁 ముగింపు OTP: *${otp}*\n\nమీరు మీ గమ్యస్థానానికి చేరుకున్నప్పుడు దీన్ని మీ డ్రైవర్‌కు చెప్పండి.`,
+  flexiEndOtpNotReady: "⏳ మీ రైడ్ ఇంకా ప్రారంభం కాలేదు. మీరు బయలుదేరిన వెంటనే మీకు ముగింపు OTP వస్తుంది.",
+  flexiEndOtpFetchError: "⚠️ ప్రస్తుతం మీ రైడ్‌ను పొందలేకపోయాం. కొద్దిసేపటి తర్వాత మళ్లీ *రైడ్ ముగించండి* నొక్కండి.",
+  flexiRideAlreadyEnded: '✅ ఈ రైడ్ ఇప్పటికే ముగిసింది.',
 
   // Errors
   somethingWentWrong: 'ఏదో తప్పు జరిగింది. మళ్ళీ ప్రారంభించడానికి "book" పంపండి.',

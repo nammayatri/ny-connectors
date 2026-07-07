@@ -112,8 +112,8 @@ export class WhatsAppConnector implements Connector {
     };
   }
 
-  async sendMessage(chatId: string, text: string, merchant?: MerchantConfig): Promise<void> {
-    await this.sendWhatsApp(chatId, {
+  async sendMessage(chatId: string, text: string, merchant?: MerchantConfig): Promise<boolean> {
+    return this.sendWhatsApp(chatId, {
       messaging_product: 'whatsapp',
       to: chatId,
       type: 'text',
@@ -121,11 +121,11 @@ export class WhatsAppConnector implements Connector {
     }, merchant);
   }
 
-  async sendWithButtons(chatId: string, text: string, buttons: { text: string; data: string; description?: string }[], merchant?: MerchantConfig): Promise<void> {
+  async sendWithButtons(chatId: string, text: string, buttons: { text: string; data: string; description?: string }[], merchant?: MerchantConfig): Promise<boolean> {
     const hasDescriptions = buttons.some((b) => b.description);
     if (buttons.length <= 3 && !hasDescriptions) {
       // Reply buttons (max 3)
-      await this.sendWhatsApp(chatId, {
+      return this.sendWhatsApp(chatId, {
         messaging_product: 'whatsapp',
         to: chatId,
         type: 'interactive',
@@ -148,7 +148,7 @@ export class WhatsAppConnector implements Connector {
       const isEstimates = buttons.some((b) => b.data.startsWith('estimate:'));
       const listLabel = isEstimates ? 'View Rides' : 'View options';
       const sectionTitle = isEstimates ? 'View Rides' : 'Options';
-      await this.sendWhatsApp(chatId, {
+      return this.sendWhatsApp(chatId, {
         messaging_product: 'whatsapp',
         to: chatId,
         type: 'interactive',
@@ -177,8 +177,8 @@ export class WhatsAppConnector implements Connector {
   // Sends the native WhatsApp "Send location" button (interactive
   // location_request_message). The user's tap returns a normal `location`
   // message, which parseIncoming already turns into '__location_pin__'.
-  async sendLocationRequest(chatId: string, text: string, merchant?: MerchantConfig): Promise<void> {
-    await this.sendWhatsApp(chatId, {
+  async sendLocationRequest(chatId: string, text: string, merchant?: MerchantConfig): Promise<boolean> {
+    return this.sendWhatsApp(chatId, {
       messaging_product: 'whatsapp',
       to: chatId,
       type: 'interactive',
@@ -190,22 +190,32 @@ export class WhatsAppConnector implements Connector {
     }, merchant);
   }
 
-  private async sendWhatsApp(chatId: string, payload: any, merchant?: MerchantConfig): Promise<void> {
+  // Returns true if WhatsApp accepted the message. Callers that need to retry
+  // (the background ride tracker) rely on this; interactive-flow callers can
+  // ignore it. Never throws — a network/API failure resolves to false.
+  private async sendWhatsApp(chatId: string, payload: any, merchant?: MerchantConfig): Promise<boolean> {
     const phoneNumberId = merchant?.whatsappPhoneNumberId || config.whatsappPhoneNumberId;
     const accessToken = merchant?.whatsappAccessToken || config.whatsappAccessToken;
 
     const url = `https://graph.facebook.com/v23.0/${phoneNumberId}/messages`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const err = await res.text().catch(() => '');
-      console.error(`[whatsapp] send failed (merchant=${merchant?.id || 'default'}): ${res.status} ${err}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.text().catch(() => '');
+        console.error(`[whatsapp] send failed (merchant=${merchant?.id || 'default'}): ${res.status} ${err}`);
+        return false;
+      }
+      return true;
+    } catch (err: any) {
+      console.error(`[whatsapp] send error (merchant=${merchant?.id || 'default'}): ${err?.message || err}`);
+      return false;
     }
   }
 }

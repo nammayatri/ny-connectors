@@ -26,6 +26,11 @@ const log = (m: string) => console.log(`[ny-mock] ${m}`);
 
 const TUMKUR = { lat: 13.3379, lon: 77.1173 };
 
+// Tracks when each mock booking was first polled, so getBookingDetails can
+// simulate a ride progressing assigned → arrived → started → completed over
+// ~20s. Lets the background RideTracker be exercised end-to-end with no driver.
+const mockRideFirstSeen = new Map<string, number>();
+
 function place(description: string, placeId: string): NYPlace {
   return { description, placeId, distance: 1200 };
 }
@@ -155,7 +160,7 @@ export class MockNammaYatriClient extends NammaYatriClient {
 
   async getFlexiQuotes(_searchId: string): Promise<NYFlexiQuote[]> {
     log('getFlexiQuotes() -> 1 Auto quote');
-    return [{ quoteId: 'mock-flexi-quote-auto', serviceTierName: 'Auto', estimatedFare: 40 }];
+    return [{ quoteId: 'mock-flexi-quote-auto', serviceTierName: 'Auto', estimatedFare: 40, vehicleVariant: 'AUTO_RICKSHAW' }];
   }
 
   async confirmQuote(quoteId: string): Promise<string> {
@@ -196,7 +201,49 @@ export class MockNammaYatriClient extends NammaYatriClient {
   }
 
   async getBookingDetails(bookingId: string): Promise<any> {
-    return { id: bookingId, status: 'TRIP_ASSIGNED' };
+    // Simulate ride progression over ~20s so the background tracker's
+    // arrived → started → ended updates can be walked without a real driver.
+    // Timeline (seconds from first poll): 0 assigned, 6 arrived, 12 started, 20 ended.
+    const now = Date.now();
+    let first = mockRideFirstSeen.get(bookingId);
+    if (first === undefined) {
+      first = now;
+      mockRideFirstSeen.set(bookingId, now);
+    }
+    const elapsed = (now - first) / 1000;
+
+    const driver = {
+      id: 'mock-ride-001',
+      driverName: 'Ravi Kumar',
+      vehicleNumber: 'KA06 AB 1234',
+      driverNumber: '9998887776',
+      rideOtp: '4321',
+      rating: 4.9,
+      etaMinutes: 3,
+    };
+    const arrivalTime = new Date(first + 6000).toISOString();
+    const startTime = new Date(first + 12000).toISOString();
+
+    let ride: any;
+    let bookingStatus = 'TRIP_ASSIGNED';
+    if (elapsed >= 20) {
+      bookingStatus = 'COMPLETED';
+      ride = {
+        ...driver, status: 'COMPLETED', endOtp: '8765',
+        driverArrivalTime: arrivalTime, rideStartTime: startTime,
+        rideEndTime: new Date(first + 20000).toISOString(),
+        computedPrice: 57, chargeableRideDistance: 4200,
+      };
+    } else if (elapsed >= 12) {
+      ride = { ...driver, status: 'INPROGRESS', endOtp: '8765', driverArrivalTime: arrivalTime, rideStartTime: startTime };
+    } else if (elapsed >= 6) {
+      ride = { ...driver, status: 'NEW', driverArrivalTime: arrivalTime };
+    } else {
+      ride = { ...driver, status: 'NEW' };
+    }
+
+    log(`getBookingDetails(${bookingId}) -> booking ${bookingStatus} / ride ${ride.status} (t=${Math.round(elapsed)}s)`);
+    return { id: bookingId, status: bookingStatus, merchantExoPhone: '08046970000', rideList: [ride] };
   }
 
   async cancelSearch(_estimateId: string): Promise<void> {

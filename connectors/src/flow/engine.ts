@@ -1,9 +1,11 @@
 import { FlowContext, INITIAL_CONTEXT } from './states';
+import { buildDriverCard } from './flexi-messages';
 import { NammaYatriClient, NYPlaceDetails, NYFlexiQuote, NYRideHistoryItem } from '../ny';
+import { isWithinServiceArea } from '../ny/cities';
 import { SessionManager } from '../session/manager';
 import { MemorySessionManager } from '../session/memory-store';
 import { TokenStore } from '../session/token-store';
-import { createTokenStore } from '../session';
+import { createTokenStore, createRideRegistry, RideRegistry, ActiveRide } from '../session';
 import { Connector, CommandMessage } from '../connectors/types';
 import { TelegramConnector } from '../connectors/telegram';
 import { WhatsAppConnector } from '../connectors/whatsapp';
@@ -36,50 +38,42 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Normalize a phone number so WhatsApp auto-linkifies it into a tap-to-dial link.
-// WhatsApp only reliably linkifies numbers in +CC international form, so a bare
-// 10-digit Indian mobile becomes +91XXXXXXXXXX. Landline-form numbers (e.g. a
-// masked exophone starting with 0) are returned as-is (best-effort fallback).
-function formatDialable(phone?: string): string | undefined {
-  if (!phone) return undefined;
-  const d = phone.replace(/[^0-9]/g, '');
-  if (!d) return undefined;
-  if (d.length === 10) return `+91${d}`;
-  if (d.length === 12 && d.startsWith('91')) return `+${d}`;
-  if (d.startsWith('0')) return phone;
-  return `+${d}`;
-}
-
 export class FlowEngine {
   private tokenStore: TokenStore;
+  private rideRegistry: RideRegistry;
 
-  constructor(private sessionManager: AnySessionManager, tokenStore?: TokenStore) {
+  constructor(private sessionManager: AnySessionManager, tokenStore?: TokenStore, rideRegistry?: RideRegistry) {
     this.tokenStore = tokenStore ?? createTokenStore();
+    this.rideRegistry = rideRegistry ?? createRideRegistry();
   }
 
   async handleMessage(message: CommandMessage, connector: Connector): Promise<void> {
     const chatId = this.getReplyTarget(message, connector);
     const merchantCfg = this.getMerchantConfig(message);
-    const reply = (text: string) => {
+    const reply = async (text: string): Promise<void> => {
       if (connector instanceof WhatsAppConnector) {
-        return connector.sendMessage(chatId, text, merchantCfg);
+        await connector.sendMessage(chatId, text, merchantCfg);
+        return;
       }
-      return connector.sendMessage(chatId, text);
+      await connector.sendMessage(chatId, text);
     };
-    const replyWithButtons = (text: string, buttons: { text: string; data: string; description?: string }[][]) => {
+    const replyWithButtons = async (text: string, buttons: { text: string; data: string; description?: string }[][]): Promise<void> => {
       if (connector instanceof TelegramConnector) {
         const tgButtons = buttons.map((row) =>
           row.map((b) => ({ text: b.text, callback_data: b.data }))
         );
-        return connector.sendWithButtons(chatId, text, tgButtons);
+        await connector.sendWithButtons(chatId, text, tgButtons);
+        return;
       }
       if (connector instanceof WhatsAppConnector) {
         const flat = buttons.flat();
-        return connector.sendWithButtons(chatId, text, flat, merchantCfg);
+        await connector.sendWithButtons(chatId, text, flat, merchantCfg);
+        return;
       }
       if (connector instanceof SlackConnector) {
         const flat = buttons.flat();
-        return connector.sendWithButtons(chatId, text, flat);
+        await connector.sendWithButtons(chatId, text, flat);
+        return;
       }
       // Fallback: show numbered list
       let fallbackText = text + '\n';
@@ -87,7 +81,7 @@ export class FlowEngine {
         fallbackText += `\n${i + 1}. ${b.text}`;
         if (b.description) fallbackText += ` — ${b.description}`;
       });
-      return connector.sendMessage(chatId, fallbackText);
+      await connector.sendMessage(chatId, fallbackText);
     };
 
     // Answer callback query if it's a button press (Telegram)
@@ -312,12 +306,52 @@ export class FlowEngine {
       // work regardless of the resumed state after a session hydrate.
       if (input === 'flexi_confirm' && ctx.nyToken && ctx.origin && ctx.state === 'CONFIRMING_FLEXI_LOCATION') {
         // Guard on state so a double-tap can't launch two searches/bookings.
-        await this.startFlexiSearch(ctx, message, reply, replyWithButtons);
+        await this.startFlexiSearch(ctx, message, reply, replyWithButtons, connector);
         return;
       }
       if (input === 'flexi_adjust') {
         // "Change location" → re-open location sharing directly, as a minimal bubble.
         await this.promptForFlexiLocation(ctx, message, reply, connector, { suppressFare: true });
+        return;
+      }
+
+      // FLEXI: reveal the end-ride OTP on demand (the "End ride" button on the
+      // "ride started" message). For rentals NY generates a distinct end OTP at
+      // ride start; the rider shares it with the driver, who enters it to end the
+      // ride. We only SURFACE it here — we never end the ride ourselves.
+      if (input.startsWith('flexi_end_otp:')) {
+        const bookingId = input.slice('flexi_end_otp:'.length);
+        // bookingId is a server-generated id (UUID). Reject anything with URL-path
+        // chars — a user could TYPE this prefix with a crafted value ("../..", "x/cancel")
+        // and inject into the /rideBooking/{id} path.
+        if (!ctx.nyToken || !/^[A-Za-z0-9_-]+$/.test(bookingId)) { await reply(s.sessionExpired); return; }
+        // Ownership check: NY's booking read does NOT enforce that the booking
+        // belongs to the caller (upstream IDOR), so only reveal the OTP for a ride
+        // THIS rider booked. The registry (durable, survives the 30-min session
+        // TTL) maps the bookingId to the booker's userKey; a mismatch or a
+        // no-longer-tracked ride gets the neutral "already ended" reply.
+        const owned = await this.rideRegistry.get(bookingId);
+        if (!owned || owned.userKey !== this.scopedUserKey(message)) { await reply(s.flexiRideAlreadyEnded); return; }
+        const client = new NammaYatriClient(ctx.nyToken);
+        const b = await client.getBookingDetails(bookingId, { allowListFallback: false }).catch(() => null);
+        if (!b) {
+          // Transient fetch failure — invite a retry rather than the misleading
+          // "ride hasn't started yet" fallback.
+          await replyWithButtons(s.flexiEndOtpFetchError, [[{ text: s.flexiEndRideButton, data: `flexi_end_otp:${bookingId}` }]]);
+          return;
+        }
+        const ride = b?.rideList?.[0];
+        const status = String(ride?.status || b?.status || '').toUpperCase();
+        const endOtp = ride?.endOtp;
+        if (status === 'COMPLETED' || status === 'CANCELLED') {
+          await reply(s.flexiRideAlreadyEnded);
+        } else if (endOtp) {
+          await replyWithButtons(s.flexiEndOtpShare(String(endOtp)), [
+            [{ text: s.flexiEndRideButton, data: `flexi_end_otp:${bookingId}` }],
+          ]);
+        } else {
+          await reply(s.flexiEndOtpNotReady);
+        }
         return;
       }
 
@@ -827,6 +861,27 @@ export class FlowEngine {
       return;
     }
 
+    // Serviceability geofence (E3): reject pins outside the merchant's Flexi
+    // service area before any auth/search work. Checked on the RAW pin (not the
+    // reverse-geocoded address). No area configured = geofence disabled.
+    const merchantCfg = this.getMerchantConfig(msg);
+    if (
+      merchantCfg?.flexiServiceArea &&
+      !isWithinServiceArea(
+        location.latitude,
+        location.longitude,
+        merchantCfg.flexiServiceArea,
+        merchantCfg.flexiServiceRadiusKm ?? 25,
+      )
+    ) {
+      ctx.state = 'IDLE';
+      await this.saveContext(msg, ctx);
+      await replyWithButtons(s.flexiOutOfArea(merchantCfg.flexiServiceArea), [
+        [{ text: s.flexiTryAgain, data: 'book' }],
+      ]);
+      return;
+    }
+
     // Ensure authenticated (silent auto-auth from the WhatsApp number).
     if (!ctx.nyToken) {
       const stored = await this.tokenStore.get(this.scopedUserKey(msg));
@@ -918,6 +973,7 @@ export class FlowEngine {
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector: Connector,
   ) {
     const s = t(ctx.language);
     if (!ctx.nyToken || !ctx.origin) {
@@ -935,12 +991,17 @@ export class FlowEngine {
       [[{ text: s.flexiCancelSearch, data: 'cancel' }]],
     );
 
+    // Reference time captured BEFORE the search so the booking (created at confirm,
+    // seconds later on the server) always clears any createdAfter list filter, even
+    // with modest clock skew between us and NY.
+    const flowStartedAt = new Date();
     let bookingId: string | null = null;
     try {
       const searchId = await client.searchFlexi(ctx.origin);
       ctx.flexiSearchId = searchId;
       let quotes: NYFlexiQuote[] = [];
-      for (let i = 0; i < 5; i++) {
+      // Real rental on_search callbacks take ~10s to populate quotes (vs instant mock).
+      for (let i = 0; i < 10; i++) {
         quotes = await client.getFlexiQuotes(searchId);
         if (quotes.length) break;
         await sleep(2000);
@@ -949,9 +1010,16 @@ export class FlowEngine {
         await this.flexiNoAuto(ctx, msg, replyWithButtons);
         return;
       }
-      ctx.flexiQuoteId = quotes[0].quoteId;
+      const chosen = quotes.find((q) => q.vehicleVariant === 'AUTO_RICKSHAW') ?? quotes[0];
+      console.log(`[flexi] chosen quote: variant=${chosen.vehicleVariant} fare=${chosen.estimatedFare} id=${chosen.quoteId}`);
+      ctx.flexiQuoteId = chosen.quoteId;
       await this.saveContext(msg, ctx);
-      bookingId = await client.confirmQuote(quotes[0].quoteId);
+      bookingId = await client.confirmQuote(chosen.quoteId);
+      if (!bookingId) {
+        console.error('[flexi] confirmQuote returned no bookingId — cannot track the booking');
+        await this.flexiNoAuto(ctx, msg, replyWithButtons);
+        return;
+      }
     } catch (err: any) {
       console.error(`[flexi] search/confirm failed: ${err.message}`);
       await this.flexiNoAuto(ctx, msg, replyWithButtons);
@@ -963,14 +1031,35 @@ export class FlowEngine {
     // stale write (which would leave a phantom booking after a cancel).
     const afterConfirm = await this.getContext(msg);
     if (afterConfirm.cancelRequested || afterConfirm.state === 'IDLE') return;
-    const searchStartedAt = new Date();
     afterConfirm.flexiSearchId = ctx.flexiSearchId;
     afterConfirm.flexiQuoteId = ctx.flexiQuoteId;
     afterConfirm.flexiBookingId = bookingId || undefined;
     afterConfirm.activeBookingId = bookingId || undefined;
-    afterConfirm.selectStartedAt = searchStartedAt.toISOString();
+    // Use the pre-search time (minus a skew buffer) so cancel/tracking's createdAfter
+    // filter never drops this just-created booking.
+    afterConfirm.selectStartedAt = new Date(flowStartedAt.getTime() - 120000).toISOString();
     afterConfirm.state = 'TRACKING';
     await this.saveContext(msg, afterConfirm);
+
+    // Register the ride with the durable tracker NOW (before the in-handler
+    // driver poll). This survives a restart mid-search: on reboot the tracker
+    // re-reads the registry and keeps watching — sending the driver card itself
+    // if this in-handler poll was killed before it could.
+    if (bookingId) {
+      const entry: ActiveRide = {
+        bookingId,
+        source: msg.source,
+        userKey: this.scopedUserKey(msg),
+        sessionUserId: this.scopedSessionUserId(msg),
+        chatId: this.getReplyTarget(msg, connector),
+        phoneNumberId: (msg.metadata?.phoneNumberId as string) || undefined,
+        merchantId: msg.merchantId,
+        language: afterConfirm.language,
+        lastStage: 'confirmed',
+        createdAt: new Date().toISOString(),
+      };
+      await this.rideRegistry.register(entry);
+    }
 
     // Poll for driver assignment (same cadence as the estimate flow).
     const POLL_ATTEMPTS = 90;
@@ -981,11 +1070,14 @@ export class FlowEngine {
       const freshCtx = await this.getContext(msg);
       if (freshCtx.cancelRequested || freshCtx.state === 'IDLE') return;
       try {
-        const bookings = await client.getActiveBookings(searchStartedAt);
+        // Poll the KNOWN booking directly (GET /rideBooking/{id}) — immune to the
+        // listV2 tag/createdAfter/limit filters that were dropping our own booking.
         const b = bookingId
-          ? (bookings.find((x: any) => x.id === bookingId) || bookings[0])
-          : bookings[0];
-        if (b?.rideList?.[0]?.driverName) {
+          ? await client.getBookingDetails(bookingId)
+          : (await client.getActiveBookings()).find((x: any) => x.id === ctx.flexiBookingId);
+        const ride = b?.rideList?.[0];
+        // Driver/vehicle/OTP populate on driver-ACCEPT for rentals (booking → TRIP_ASSIGNED).
+        if (ride?.driverName || ride?.vehicleNumber || ride?.rideOtp) {
           foundBooking = b;
           freshCtx.activeBookingId = b.id;
           await this.saveContext(msg, freshCtx);
@@ -1001,7 +1093,12 @@ export class FlowEngine {
     }
 
     if (foundBooking) {
-      await this.sendFlexiDriverCard(foundBooking, msg, reply, replyWithButtons);
+      // Claim the 'assigned' stage so the background tracker doesn't also send
+      // this card; the tracker then owns arrived/started/ended from here on.
+      if (await this.rideRegistry.claimStage(bookingId!, 'assigned')) {
+        await this.sendFlexiDriverCard(foundBooking, msg, reply, replyWithButtons);
+      }
+      await this.rideRegistry.update(bookingId!, { lastStage: 'assigned' });
     } else {
       await this.flexiNoAuto(ctx, msg, replyWithButtons);
     }
@@ -1010,32 +1107,13 @@ export class FlowEngine {
   /** Render the "auto found" card (driver, rating/ETA, OTP, tappable dial number). */
   private async sendFlexiDriverCard(
     booking: any, msg: CommandMessage,
-    reply: (txt: string) => Promise<void>,
+    _reply: (txt: string) => Promise<void>,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
   ) {
     const ctx = await this.getContext(msg);
-    const s = t(ctx.language);
-    const ride = booking.rideList?.[0];
-    const driverName = ride?.driverName || booking.driverName || '';
-    const vehicleNumber = ride?.vehicleNumber || booking.vehicleNumber;
-    // Prefer the driver's mobile for the tap-to-dial link; the masked exophone is
-    // a landline-form fallback that WhatsApp won't linkify as a mobile.
-    const dial = formatDialable(ride?.driverNumber || booking.driverNumber || ride?.merchantExoPhone || booking.merchantExoPhone);
-    const otp = ride?.rideOtp || booking.rideOtp;
-    const rating = ride?.rating ?? booking.rating;
-    const etaMin = ride?.etaMinutes ?? booking.etaMinutes;
-
-    const lines: string[] = [s.flexiFoundDriver(driverName)];
-    if (rating != null && etaMin != null) lines.push(s.flexiDriverMeta(rating, etaMin));
-    if (vehicleNumber) lines.push(s.vehicleLabel(vehicleNumber));
-    if (otp) lines.push('', s.flexiOtpShare(otp));
-    if (dial) lines.push('', s.flexiCallDriver(dial)); // the tappable +91 number IS the dialer
-    lines.push('', s.flexiSafetyNote);
-
-    // No "Call Driver" button — the +91 number above opens the dialer directly.
-    await replyWithButtons(lines.join('\n'), [
-      [{ text: s.cancelRide, data: `cancel_confirm:${booking.id}` }],
-    ]);
+    // Shared builder — same card the background tracker sends on a restart.
+    const card = buildDriverCard(booking, ctx.language);
+    await replyWithButtons(card.text, card.buttons ?? []);
   }
 
   /** No auto available — reset to idle and offer a retry. */
@@ -1992,12 +2070,17 @@ export class FlowEngine {
 
         console.log(`[cancel] booking=${booking?.id} bookingStatus=${bookingStatus} rideStatus=${rideStatus}`);
 
+        // The booking to stop tracking on a user-initiated cancel (the cancel
+        // button carries the id; fall back to the flexi/active booking in context).
+        const trackedId = explicitBookingId || ctx.flexiBookingId || ctx.activeBookingId || booking?.id || undefined;
+
         if (bookingStatus === 'COMPLETED' || rideStatus === 'COMPLETED') {
           await this.resetContext(msg);
           await this.replyWithMenu(s.rideCompleted, msg, replyWithButtons);
           return;
         }
         if (bookingStatus === 'CANCELLED' || rideStatus === 'CANCELLED') {
+          if (trackedId) { await this.rideRegistry.claimStage(trackedId, 'cancelled'); await this.rideRegistry.remove(trackedId); }
           await this.resetContext(msg);
           await this.replyWithMenu(s.rideAlreadyCancelled, msg, replyWithButtons);
           return;
@@ -2011,6 +2094,11 @@ export class FlowEngine {
 
         if (booking?.id) {
           await client.cancelRide(booking.id, booking.status);
+          // Stop the background tracker for this ride and pre-claim 'cancelled'
+          // so it won't also send a duplicate cancellation message.
+          const stopId = trackedId || booking.id;
+          await this.rideRegistry.claimStage(stopId, 'cancelled');
+          await this.rideRegistry.remove(stopId);
           await this.resetContext(msg);
           await this.replyWithMenu(s.rideCancelled, msg, replyWithButtons);
           return;

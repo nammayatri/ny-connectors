@@ -165,8 +165,28 @@ export const hi: LanguageStrings = {
   flexiOtpShare: (otp: string) => `🔑 स्टार्ट OTP: *${otp}*`,
   flexiCallDriver: (phone: string) => `📞 ड्राइवर को कॉल करें: ${phone}`,
   flexiSafetyNote: 'ड्राइवर के साथ अपना गंतव्य पक्का कर लें।',
-  flexiNoAuto: '😔 अभी आपके पास कोई ऑटो उपलब्ध नहीं है। थोड़ी देर बाद फिर कोशिश करें।',
+  flexiNoAuto: '😔 अभी आपके पास कोई ऑटो उपलब्ध नहीं है। कृपया फिर कोशिश करें।',
   flexiTryAgain: '🔁 फिर कोशिश करें',
+  flexiOutOfArea: (area: string) => `📍 यह जगह हमारी सेवा क्षेत्र से बाहर लगती है।\n\nNamma Yatri ऑटो फ़िलहाल *${area}* में उपलब्ध हैं। वहाँ से पिकअप आज़माएँ, या कुछ समय बाद देखें।`,
+
+  // Flexi ride-progress updates (pushed by the background tracker)
+  flexiArrived: (otp: string) => otp
+    ? `🛺 आपका ऑटो आ गया है!\nराइड शुरू करने के लिए ड्राइवर को OTP बताएँ।\n\n🔑 OTP: *${otp}* `
+    : '🛺 आपका ऑटो आ गया है!\nकृपया पिकअप पॉइंट पर अपने ड्राइवर से मिलें।',
+  flexiRideStarted: "🚦 राइड शुरू हो गई! राइड का आनंद लें।\n\nअपनी मंज़िल पर पहुँच गए? नीचे *राइड समाप्त करें* पर टैप करें",
+  flexiFareFinal: (amount: number, km?: number) =>
+    km != null ? `💰 कुल किराया: *₹${amount}* · ${km} किमी` : `💰 कुल किराया: *₹${amount}*`,
+  flexiFareUnavailable: '💰 आपका किराया जल्द ही पक्का हो जाएगा।',
+  flexiRideEnded: (fareLine: string) => `🎉 राइड पूरी हुई!\n\n${fareLine}\n\n🙏 Namma Yatri के साथ सफर करने के लिए धन्यवाद।`,
+  flexiRideCancelled: '❌ आपकी राइड रद्द हो गई।\n\nकहीं जाना है? कभी भी दूसरा ऑटो बुक करें।',
+  flexiBookAnother: '🛺 दूसरा बुक करें',
+
+  // Flexi end-ride OTP (rental)
+  flexiEndRideButton: '🏁 राइड समाप्त करें',
+  flexiEndOtpShare: (otp: string) => `🏁 समाप्ति OTP: *${otp}*\n\nजब आप अपनी मंज़िल पर पहुँच जाएँ तो यह अपने ड्राइवर को बताएँ।`,
+  flexiEndOtpNotReady: "⏳ आपकी राइड अभी शुरू नहीं हुई है। जैसे ही आप रास्ते पर होंगे, आपको समाप्ति OTP मिल जाएगा।",
+  flexiEndOtpFetchError: "⚠️ अभी आपकी राइड नहीं मिल पाई। थोड़ी देर में फिर से *राइड समाप्त करें* पर टैप करें।",
+  flexiRideAlreadyEnded: '✅ यह राइड पहले ही समाप्त हो चुकी है।',
 
   // Errors
   somethingWentWrong: 'कुछ गड़बड़ हो गई। दोबारा शुरू करने के लिए "book" भेजें।',

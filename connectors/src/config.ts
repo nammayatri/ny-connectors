@@ -17,6 +17,8 @@ export interface MerchantConfig {
   flexiEnabled: boolean;  // gate the location-only "Flexi" booking flow (Tumkur)
   flexiBaseFare?: number; // display-only metered tariff, ₹ base (shown to riders)
   flexiPerKm?: number;    // display-only metered tariff, ₹ per km
+  flexiServiceArea?: string;      // served-city name for the geofence (e.g. "Tumkur")
+  flexiServiceRadiusKm?: number;  // serviceable radius around that city center (km)
 }
 
 export interface Config {
@@ -45,9 +47,17 @@ export interface Config {
   nyDashboardMerchant: string;
   nyCity: string;
   nyMock: boolean;
+  nyLogBodies: boolean;           // log full NY request/response bodies (PII) — disable in prod
   flexiEnabled: boolean;
   flexiBaseFare?: number;
   flexiPerKm?: number;
+  flexiServiceArea?: string;
+  flexiServiceRadiusKm?: number;
+  flexiRentalDistanceM: number;   // rental package distance sent to NY (meters)
+  flexiRentalDurationS: number;   // rental package duration sent to NY (seconds)
+  flexiTrackEnabled: boolean;     // run the background ride-progress tracker
+  flexiTrackPollMs: number;       // how often the tracker polls each active ride
+  flexiTrackMaxAgeMs: number;     // stop watching a ride after this age (safety net)
 }
 
 // Parses REDIS_CLUSTER_NODES env var: comma-separated host:port pairs.
@@ -105,12 +115,33 @@ export const config: Config = {
   // Dev-only: when true, the NY API client is replaced by an in-memory mock
   // (canned auth/places/estimates, no-op booking). No real calls, no dispatch.
   nyMock: /^(1|true|yes)$/i.test(process.env.NY_MOCK || ''),
+  // Default on (preserves local debugging); set NY_LOG_BODIES=0 in production to
+  // stop logging driver name/phone, OTP, and fare on every API call.
+  nyLogBodies: /^(1|true|yes)$/i.test(process.env.NY_LOG_BODIES || 'true'),
   // Rollout flag for the location-only Flexi flow. Global default for the legacy
   // single merchant; override per-merchant via MERCHANT_{ID}_FLEXI_ENABLED.
   flexiEnabled: /^(1|true|yes)$/i.test(process.env.FLEXI_ENABLED || ''),
   // Display-only metered tariff for the Flexi fare line (never used to compute a fare).
   flexiBaseFare: process.env.FLEXI_BASE_FARE ? parseFloat(process.env.FLEXI_BASE_FARE) : undefined,
   flexiPerKm: process.env.FLEXI_PER_KM ? parseFloat(process.env.FLEXI_PER_KM) : undefined,
+  // Geofence for the Flexi flow: pins farther than the radius from this served
+  // city's center get an "outside service area" reply (E3). Unset = no geofence.
+  flexiServiceArea: process.env.FLEXI_SERVICE_AREA || undefined,
+  flexiServiceRadiusKm: process.env.FLEXI_SERVICE_RADIUS_KM ? parseFloat(process.env.FLEXI_SERVICE_RADIUS_KM) : undefined,
+  // Rental package sent for a Flexi booking. NY only returns a quote when the
+  // distance fits the duration's included km (~10 km/hr), so keep km <= ~10 x hours
+  // (e.g. 10 km / 60 min works; 2 km needs >= ~12 min). Defaults: 10 km / 60 min.
+  flexiRentalDistanceM: Math.max(1, Math.round((parseFloat(process.env.FLEXI_RENTAL_DISTANCE_KM || '10') || 10) * 1000)),
+  flexiRentalDurationS: Math.max(1, Math.round((parseFloat(process.env.FLEXI_RENTAL_DURATION_MIN || '60') || 60) * 60)),
+  // Background ride-progress tracker: after a Flexi booking is confirmed, a
+  // single timer polls each active ride and pushes arrived/started/ended updates
+  // (NY has no rider push channel we can use, so we must poll). Default 12s poll,
+  // give up on a ride after 3h (safety net for stuck/abandoned rides).
+  flexiTrackEnabled: /^(1|true|yes)$/i.test(process.env.FLEXI_TRACK_ENABLED || 'true'),
+  flexiTrackPollMs: Math.max(2000, Math.round((parseFloat(process.env.FLEXI_TRACK_POLL_SEC || '3') || 3) * 1000)),
+  // Clamp to < 24h: WhatsApp rejects free-form messages outside the 24h
+  // customer-service window, so watching a ride past that can't notify anyway.
+  flexiTrackMaxAgeMs: Math.min(23 * 60 * 60 * 1000, Math.max(60000, Math.round((parseFloat(process.env.FLEXI_TRACK_MAX_AGE_MIN || '180') || 180) * 60000))),
 };
 
 // ---------------------------------------------------------------------------
@@ -149,6 +180,8 @@ function loadMerchants(): void {
       flexiEnabled: /^(1|true|yes)$/i.test(process.env[`${p}FLEXI_ENABLED`] || String(config.flexiEnabled)),
       flexiBaseFare: process.env[`${p}FLEXI_BASE_FARE`] ? parseFloat(process.env[`${p}FLEXI_BASE_FARE`] as string) : config.flexiBaseFare,
       flexiPerKm: process.env[`${p}FLEXI_PER_KM`] ? parseFloat(process.env[`${p}FLEXI_PER_KM`] as string) : config.flexiPerKm,
+      flexiServiceArea: process.env[`${p}FLEXI_SERVICE_AREA`] || config.flexiServiceArea,
+      flexiServiceRadiusKm: process.env[`${p}FLEXI_SERVICE_RADIUS_KM`] ? parseFloat(process.env[`${p}FLEXI_SERVICE_RADIUS_KM`] as string) : config.flexiServiceRadiusKm,
     };
     if (cfg.whatsappPhoneNumberId) {
       merchantsById.set(id, cfg);
@@ -173,6 +206,8 @@ function loadMerchants(): void {
       flexiEnabled: config.flexiEnabled,
       flexiBaseFare: config.flexiBaseFare,
       flexiPerKm: config.flexiPerKm,
+      flexiServiceArea: config.flexiServiceArea,
+      flexiServiceRadiusKm: config.flexiServiceRadiusKm,
     };
     merchantsById.set('default', fallback);
     merchantsByPhoneNumberId.set(config.whatsappPhoneNumberId, fallback);

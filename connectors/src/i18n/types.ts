@@ -167,6 +167,21 @@ export interface LanguageStrings {
   flexiSafetyNote: string;
   flexiNoAuto: string;
   flexiTryAgain: string;
+  flexiOutOfArea: (area: string) => string;
+  // Flexi ride-progress updates (pushed by the background tracker)
+  flexiArrived: (otp: string) => string;
+  flexiRideStarted: string;
+  flexiFareFinal: (amount: number, km?: number) => string;
+  flexiFareUnavailable: string;
+  flexiRideEnded: (fareLine: string) => string;
+  flexiRideCancelled: string;
+  flexiBookAnother: string;
+  // Flexi end-ride OTP (rental: rider reveals it on the "End ride" button, shares with driver)
+  flexiEndRideButton: string;
+  flexiEndOtpShare: (otp: string) => string;
+  flexiEndOtpNotReady: string;
+  flexiEndOtpFetchError: string;
+  flexiRideAlreadyEnded: string;
 
   // Errors
   somethingWentWrong: string;

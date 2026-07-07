@@ -165,8 +165,26 @@ export const en: LanguageStrings = {
   flexiOtpShare: (otp: string) => `🔑 Start OTP: *${otp}*`,
   flexiCallDriver: (phone: string) => `📞 Call driver: ${phone}`,
   flexiSafetyNote: "Confirm your destination with the driver.",
-  flexiNoAuto: '😔 No auto available near you right now. Please try again in a bit.',
+  flexiNoAuto: '😔 No auto available near you right now. Please try again.',
   flexiTryAgain: '🔁 Try again',
+  flexiOutOfArea: (area: string) => `📍 That location looks outside our service area.\n\nNamma Yatri autos currently run in *${area}*. Try a pickup there, or check back soon.`,
+  // Flexi ride-progress updates (pushed by the background tracker)
+  flexiArrived: (otp: string) => otp
+    ? `🛺 Your auto has arrived!\nShare OTP with the driver to start.\n\n🔑 OTP: *${otp}* `
+    : '🛺 Your auto has arrived!\nPlease meet your driver at the pickup point.',
+  flexiRideStarted: "🚦 Ride started! Enjoy the ride.\n\nReached your destination? Tap *End ride* below",
+  flexiFareFinal: (amount: number, km?: number) =>
+    km != null ? `💰 Total fare: *₹${amount}* · ${km} km` : `💰 Total fare: *₹${amount}*`,
+  flexiFareUnavailable: '💰 Your fare will be confirmed shortly.',
+  flexiRideEnded: (fareLine: string) => `🎉 Ride complete!\n\n${fareLine}\n\n🙏 Thank you for riding with Namma Yatri.`,
+  flexiRideCancelled: '❌ Your ride was cancelled.\n\nNeed to go somewhere? Book another auto anytime.',
+  flexiBookAnother: '🛺 Book another',
+  // Flexi end-ride OTP (rental)
+  flexiEndRideButton: '🏁 End ride',
+  flexiEndOtpShare: (otp: string) => `🏁 End OTP: *${otp}*\n\nShare this with your driver when you reach your destination.`,
+  flexiEndOtpNotReady: "⏳ Your ride hasn't started yet. You'll get the end OTP once you're on your way.",
+  flexiEndOtpFetchError: "⚠️ Couldn't fetch your ride just now. Tap *End ride* again in a moment.",
+  flexiRideAlreadyEnded: '✅ This ride has already ended.',
 
   // Errors
   somethingWentWrong: 'Something went wrong. Send "book" to start over.',

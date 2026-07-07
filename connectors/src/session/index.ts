@@ -3,6 +3,7 @@ import { config } from '../config';
 import { SessionManager } from './manager';
 import { MemorySessionManager } from './memory-store';
 import { TokenStore, RedisTokenStore, MemoryTokenStore } from './token-store';
+import { RideRegistry, RedisRideRegistry, MemoryRideRegistry } from './ride-registry';
 
 export type SessionStore = SessionManager | MemorySessionManager;
 
@@ -45,6 +46,16 @@ export function createTokenStore(): TokenStore {
   return new MemoryTokenStore();
 }
 
+export function createRideRegistry(): RideRegistry {
+  if (isRedisConfigured()) {
+    console.log('[ride-registry] Using Redis store');
+    return new RedisRideRegistry();
+  }
+  console.log('[ride-registry] Using in-memory store (no Redis configured)');
+  return new MemoryRideRegistry();
+}
+
 export { SessionManager } from './manager';
 export { MemorySessionManager } from './memory-store';
 export { TokenStore, RedisTokenStore, MemoryTokenStore } from './token-store';
+export { RideRegistry, ActiveRide, TrackStage, RedisRideRegistry, MemoryRideRegistry } from './ride-registry';

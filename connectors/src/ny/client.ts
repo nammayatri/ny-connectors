@@ -53,7 +53,7 @@ async function loggedFetch(url: string, init: RequestInit = {}): Promise<LoggedR
 
   console.log(`[ny-api] → ${method} ${url}`);
   console.log(`[ny-api]   request headers: ${JSON.stringify(headers)}`);
-  if (reqBody !== undefined) {
+  if (reqBody !== undefined && config.nyLogBodies) {
     console.log(`[ny-api]   request body: ${reqBody}`);
   }
 
@@ -69,7 +69,11 @@ async function loggedFetch(url: string, init: RequestInit = {}): Promise<LoggedR
   const elapsed = Date.now() - started;
 
   console.log(`[ny-api] ← ${res.status} ${method} ${url} (${elapsed}ms)`);
-  console.log(`[ny-api]   response body: ${text}`);
+  // Response bodies carry PII (driver name/phone, OTP, fare). The tracker calls
+  // getBookingDetails on a timer, so gate body logging (NY_LOG_BODIES=0 in prod).
+  if (config.nyLogBodies) {
+    console.log(`[ny-api]   response body: ${text}`);
+  }
 
   return {
     ok: res.ok,
@@ -114,6 +118,7 @@ export interface NYFlexiQuote {
   quoteId: string;
   serviceTierName?: string;
   estimatedFare?: number;
+  vehicleVariant?: string;
 }
 
 export interface NYRideHistoryItem {
@@ -490,6 +495,13 @@ export class NammaYatriClient {
   // (isMeterRideSearch) — until then this only works against NY_MOCK.
   // -------------------------------------------------------------------------
   async searchFlexi(origin: NYPlaceDetails): Promise<string> {
+    // Flexi is served by NY's RENTAL product — a normal customer CAN originate it
+    // (unlike MeterRide, which is role-restricted). Package size is configurable via
+    // FLEXI_RENTAL_DISTANCE_KM / FLEXI_RENTAL_DURATION_MIN (default 10 km / 60 min). NY
+    // only quotes when the km fit the duration's included km (~10 km/hr), so keep
+    // km <= ~10 x hours. startTime = NOW so it dispatches immediately.
+    const RENTAL_DISTANCE_M = config.flexiRentalDistanceM;
+    const RENTAL_DURATION_S = config.flexiRentalDurationS;
     const body = {
       contents: {
         origin: {
@@ -497,18 +509,18 @@ export class NammaYatriClient {
           address: {
             area: origin.address.area || '',
             city: origin.address.city || '',
-            country: origin.address.country || '',
+            country: origin.address.country || 'India',
             building: origin.address.building || '',
             placeId: origin.placeId,
             state: origin.address.state || '',
           },
         },
         isSourceManuallyMoved: false,
-        isMeterRideSearch: true,
-        placeNameSource: 'API_MCP',
-        platformType: 'APPLICATION',
+        startTime: new Date().toISOString(),
+        estimatedRentalDistance: RENTAL_DISTANCE_M,
+        estimatedRentalDuration: RENTAL_DURATION_S,
       },
-      fareProductType: 'ONE_WAY',
+      fareProductType: 'RENTAL',
     };
     const res = await loggedFetch(`${config.nyBaseUrl}/rideSearch`, {
       method: 'POST',
@@ -518,10 +530,10 @@ export class NammaYatriClient {
     if (!res.ok) {
       const err = await res.json().catch(() => ({} as any)) as any;
       const msg = err.errorMessage || err.errorCode || '';
-      throw new Error(`Flexi search failed: ${res.status}${msg ? ` — ${msg}` : ''}`);
+      throw new Error(`Flexi (rental) search failed: ${res.status}${msg ? ` — ${msg}` : ''}`);
     }
     const data = await res.json() as any;
-    console.log(`[searchFlexi] searchId=${data.searchId}`);
+    console.log(`[searchFlexi/rental] searchId=${data.searchId}`);
     return data.searchId;
   }
 
@@ -534,11 +546,21 @@ export class NammaYatriClient {
       throw new Error(`Get flexi quotes failed: ${res.status}`);
     }
     const data = await res.json() as any;
-    return (data.quotes || []).map((q: any) => ({
-      quoteId: q.id,
-      serviceTierName: q.serviceTierName,
-      estimatedFare: q.estimatedFare,
-    }));
+    // Rental quotes are tagged under `onRentalCab` (on-demand/one-way under `onDemandCab`);
+    // the inner object holds the quoteId, vehicleVariant and estimatedTotalFare.
+    const quotes: NYFlexiQuote[] = (data.quotes || []).map((q: any) => {
+      const inner = q.onRentalCab || q.onDemandCab || q;
+      return {
+        quoteId: inner.id,
+        serviceTierName: inner.serviceTierName || inner.vehicleVariant,
+        estimatedFare: inner.estimatedTotalFare ?? inner.estimatedFare,
+        vehicleVariant: inner.vehicleVariant,
+      };
+    }).filter((q: NYFlexiQuote) => q.quoteId);
+    // Prefer an auto (AUTO_RICKSHAW) quote for Flexi; else fall back to the first.
+    quotes.sort((a, b) =>
+      (b.vehicleVariant === 'AUTO_RICKSHAW' ? 1 : 0) - (a.vehicleVariant === 'AUTO_RICKSHAW' ? 1 : 0));
+    return quotes;
   }
 
   // Confirm a Flexi quote — classic BECKN confirm path (empty body). Returns the bookingId.
@@ -592,15 +614,30 @@ export class NammaYatriClient {
    * Fetches full booking details including driver info, OTP etc.
    * Tries /rideBooking/{bookingId} first, then falls back to listv2.
    */
-  async getBookingDetails(bookingId: string): Promise<any> {
+  async getBookingDetails(bookingId: string, opts?: { allowListFallback?: boolean }): Promise<any> {
+    // The full booking read is POST /rideBooking/{id} (a GET 404s "Not found" —
+    // the route only exists as POST). It returns the booking regardless of status
+    // (incl. INPROGRESS/COMPLETED), which is what lets the tracker see started/ended.
     const url = `${config.nyBaseUrl}/rideBooking/${bookingId}`;
     const res = await loggedFetch(url, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json', token: this.token },
+      body: JSON.stringify({}),
     });
     if (!res.ok) {
+      // The listV2 fallback CANNOT represent INPROGRESS/COMPLETED rides (its
+      // status filter excludes them) and must never substitute a DIFFERENT
+      // booking. Callers watching a ride to its end (the background tracker)
+      // pass allowListFallback:false to get null on failure instead of a
+      // wrong/partial booking, and retry on the next poll.
+      if (opts?.allowListFallback === false) {
+        console.warn(`[booking] getBookingDetails failed: ${res.status} (no list fallback)`);
+        return null;
+      }
       console.warn(`[booking] getBookingDetails failed: ${res.status}, falling back to listv2`);
       const actives = await this.getActiveBookings().catch(() => []);
-      return actives.find((b: any) => b.id === bookingId) || actives[0] || null;
+      // Exact-id match only — never blindly return actives[0] (another booking).
+      return actives.find((b: any) => b.id === bookingId) || null;
     }
     const data = await res.json() as any;
     return data.contents ?? data;

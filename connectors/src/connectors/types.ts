@@ -22,5 +22,8 @@ export interface Connector {
   readonly source: MessageSource;
   parseIncoming(req: Request): CommandMessage | null;
   verifyWebhook(req: Request): boolean;
-  sendMessage(chatId: string, text: string): Promise<void>;
+  // Returns true when the platform accepted the message; connectors that don't
+  // report delivery (Telegram/Slack) return void. The ride tracker uses the
+  // boolean (from WhatsApp) to decide whether to retry a status update.
+  sendMessage(chatId: string, text: string): Promise<void | boolean>;
 }

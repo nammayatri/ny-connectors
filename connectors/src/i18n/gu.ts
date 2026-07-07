@@ -163,8 +163,28 @@ export const gu: LanguageStrings = {
   flexiOtpShare: (otp: string) => `🔑 સ્ટાર્ટ OTP: *${otp}*`,
   flexiCallDriver: (phone: string) => `📞 ડ્રાઈવરને કૉલ કરો: ${phone}`,
   flexiSafetyNote: 'ડ્રાઈવર સાથે તમારું ગંતવ્ય કન્ફર્મ કરો.',
-  flexiNoAuto: '😔 અત્યારે તમારી નજીક કોઈ ઓટો ઉપલબ્ધ નથી. થોડી વારમાં ફરી પ્રયાસ કરો.',
+  flexiNoAuto: '😔 અત્યારે તમારી નજીક કોઈ ઓટો ઉપલબ્ધ નથી. કૃપા કરીને ફરી પ્રયાસ કરો.',
   flexiTryAgain: '🔁 ફરી પ્રયાસ કરો',
+  flexiOutOfArea: (area: string) => `📍 આ સ્થળ અમારા સેવા વિસ્તારની બહાર લાગે છે.\n\nNamma Yatri ઓટો હાલમાં *${area}* માં ઉપલબ્ધ છે. ત્યાંથી પિકઅપ અજમાવો, અથવા થોડા સમય પછી ફરી તપાસો.`,
+
+  // Flexi ride-progress updates (pushed by the background tracker)
+  flexiArrived: (otp: string) => otp
+    ? `🛺 તમારો ઓટો આવી ગયો છે!\nરાઈડ શરૂ કરવા ડ્રાઈવરને OTP આપો.\n\n🔑 OTP: *${otp}* `
+    : '🛺 તમારો ઓટો આવી ગયો છે!\nકૃપા કરીને પિકઅપ પોઈન્ટ પર તમારા ડ્રાઈવરને મળો.',
+  flexiRideStarted: "🚦 રાઈડ શરૂ થઈ! રાઈડનો આનંદ માણો.\n\nતમારા ગંતવ્ય પર પહોંચી ગયા? નીચે *રાઈડ સમાપ્ત કરો* દબાવો",
+  flexiFareFinal: (amount: number, km?: number) =>
+    km != null ? `💰 કુલ ભાડું: *₹${amount}* · ${km} કિમી` : `💰 કુલ ભાડું: *₹${amount}*`,
+  flexiFareUnavailable: '💰 તમારું ભાડું થોડી વારમાં કન્ફર્મ થશે.',
+  flexiRideEnded: (fareLine: string) => `🎉 રાઈડ પૂર્ણ થઈ!\n\n${fareLine}\n\n🙏 Namma Yatri સાથે મુસાફરી કરવા બદલ આભાર.`,
+  flexiRideCancelled: '❌ તમારી રાઈડ રદ થઈ ગઈ.\n\nક્યાંક જવું છે? ગમે ત્યારે બીજો ઓટો બુક કરો.',
+  flexiBookAnother: '🛺 બીજો બુક કરો',
+
+  // Flexi end-ride OTP (rental)
+  flexiEndRideButton: '🏁 રાઈડ સમાપ્ત કરો',
+  flexiEndOtpShare: (otp: string) => `🏁 સમાપ્તિ OTP: *${otp}*\n\nજ્યારે તમે તમારા ગંતવ્ય પર પહોંચો ત્યારે આ તમારા ડ્રાઈવરને આપો.`,
+  flexiEndOtpNotReady: "⏳ તમારી રાઈડ હજુ શરૂ થઈ નથી. જેવા તમે રસ્તે હશો કે તરત તમને સમાપ્તિ OTP મળી જશે.",
+  flexiEndOtpFetchError: "⚠️ અત્યારે તમારી રાઈડ મળી શકી નહીં. થોડી વારમાં ફરીથી *રાઈડ સમાપ્ત કરો* પર ટૅપ કરો.",
+  flexiRideAlreadyEnded: '✅ આ રાઈડ પહેલેથી સમાપ્ત થઈ ગઈ છે.',
 
   // Errors
   somethingWentWrong: 'કંઈક ખોટું થયું. ફરીથી શરૂ કરવા "book" મોકલો.',

@@ -135,7 +135,7 @@ export const DEFAULT_CITY: CityCenter = SUPPORTED_CITIES[0];
 export const CITY_SEARCH_RADIUS_METERS = 50000;
 
 // Haversine distance in kilometers between two lat/lon points.
-function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const R = 6371;
   const dLat = toRad(lat2 - lat1);
@@ -165,4 +165,39 @@ export function findNearestCity(
     }
   }
   return nearestDist <= maxKm ? nearest : DEFAULT_CITY;
+}
+
+// Common display-name aliases → SUPPORTED_CITIES canonical names, so a merchant
+// can configure FLEXI_SERVICE_AREA in the name riders actually use (e.g. Tumkur,
+// Bengaluru) and still resolve to the right city center.
+const CITY_ALIASES: Record<string, string> = {
+  tumkur: 'Tumakuru',
+  tumakuru: 'Tumakuru',
+  bengaluru: 'Bangalore',
+  bangalore: 'Bangalore',
+  mysuru: 'Mysore',
+  mysore: 'Mysore',
+  bombay: 'Mumbai',
+};
+
+// Resolve a service-area display name to a known city center (alias-aware).
+export function cityCenterByName(name: string): CityCenter | undefined {
+  if (!name) return undefined;
+  const key = name.trim().toLowerCase();
+  const canonical = (CITY_ALIASES[key] || name.trim()).toLowerCase();
+  return SUPPORTED_CITIES.find((c) => c.name.toLowerCase() === canonical);
+}
+
+// Is a coordinate within `radiusKm` of the named service area's city center?
+// FAIL-OPEN: if the area name is unknown (not a supported city), we treat the
+// pin as serviceable rather than blocking a booking on a config typo.
+export function isWithinServiceArea(
+  lat: number,
+  lon: number,
+  areaName: string,
+  radiusKm: number,
+): boolean {
+  const center = cityCenterByName(areaName);
+  if (!center) return true;
+  return haversineKm(lat, lon, center.lat, center.lon) <= radiusKm;
 }

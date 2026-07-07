@@ -163,8 +163,28 @@ export const kn: LanguageStrings = {
   flexiOtpShare: (otp: string) => `🔑 ಆರಂಭ OTP: *${otp}*`,
   flexiCallDriver: (phone: string) => `📞 ಚಾಲಕರಿಗೆ ಕರೆ ಮಾಡಿ: ${phone}`,
   flexiSafetyNote: 'ಚಾಲಕರೊಂದಿಗೆ ನಿಮ್ಮ ಗಮ್ಯಸ್ಥಾನವನ್ನು ಖಚಿತಪಡಿಸಿ.',
-  flexiNoAuto: '😔 ಸದ್ಯಕ್ಕೆ ನಿಮ್ಮ ಹತ್ತಿರ ಯಾವುದೇ ಆಟೋ ಲಭ್ಯವಿಲ್ಲ. ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
+  flexiNoAuto: '😔 ಸದ್ಯಕ್ಕೆ ನಿಮ್ಮ ಹತ್ತಿರ ಯಾವುದೇ ಆಟೋ ಲಭ್ಯವಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.',
   flexiTryAgain: '🔁 ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ',
+  flexiOutOfArea: (area: string) => `📍 ಈ ಸ್ಥಳ ನಮ್ಮ ಸೇವಾ ಪ್ರದೇಶದ ಹೊರಗಿದೆ.\n\nNamma Yatri ಆಟೋಗಳು ಸದ್ಯ *${area}* ನಲ್ಲಿ ಲಭ್ಯವಿವೆ. ಅಲ್ಲಿಂದ ಪಿಕಪ್ ಪ್ರಯತ್ನಿಸಿ, ಅಥವಾ ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ ನೋಡಿ.`,
+
+  // Flexi ride-progress updates (pushed by the background tracker)
+  flexiArrived: (otp: string) => otp
+    ? `🛺 ನಿಮ್ಮ ಆಟೋ ಬಂದಿದೆ!\nರೈಡ್ ಪ್ರಾರಂಭಿಸಲು ಚಾಲಕರಿಗೆ OTP ಹೇಳಿ.\n\n🔑 OTP: *${otp}* `
+    : '🛺 ನಿಮ್ಮ ಆಟೋ ಬಂದಿದೆ!\nದಯವಿಟ್ಟು ಪಿಕಪ್ ಪಾಯಿಂಟ್‌ನಲ್ಲಿ ನಿಮ್ಮ ಚಾಲಕರನ್ನು ಭೇಟಿಯಾಗಿ.',
+  flexiRideStarted: "🚦 ರೈಡ್ ಪ್ರಾರಂಭವಾಗಿದೆ! ಪ್ರಯಾಣವನ್ನು ಆನಂದಿಸಿ.\n\nನಿಮ್ಮ ಗಮ್ಯಸ್ಥಾನ ತಲುಪಿದಿರಾ? ಕೆಳಗಿನ *ರೈಡ್ ಮುಗಿಸಿ* ಒತ್ತಿ",
+  flexiFareFinal: (amount: number, km?: number) =>
+    km != null ? `💰 ಒಟ್ಟು ಶುಲ್ಕ: *₹${amount}* · ${km} ಕಿಮೀ` : `💰 ಒಟ್ಟು ಶುಲ್ಕ: *₹${amount}*`,
+  flexiFareUnavailable: '💰 ನಿಮ್ಮ ಶುಲ್ಕ ಶೀಘ್ರದಲ್ಲೇ ಖಚಿತವಾಗುತ್ತದೆ.',
+  flexiRideEnded: (fareLine: string) => `🎉 ರೈಡ್ ಪೂರ್ಣಗೊಂಡಿದೆ!\n\n${fareLine}\n\n🙏 Namma Yatri ಜೊತೆ ಪ್ರಯಾಣಿಸಿದ್ದಕ್ಕೆ ಧನ್ಯವಾದಗಳು.`,
+  flexiRideCancelled: '❌ ನಿಮ್ಮ ರೈಡ್ ರದ್ದಾಗಿದೆ.\n\nಎಲ್ಲಿಗಾದರೂ ಹೋಗಬೇಕೇ? ಯಾವಾಗ ಬೇಕಾದರೂ ಇನ್ನೊಂದು ಆಟೋ ಬುಕ್ ಮಾಡಿ.',
+  flexiBookAnother: '🛺 ಇನ್ನೊಂದು ಬುಕ್ ಮಾಡಿ',
+
+  // Flexi end-ride OTP (rental)
+  flexiEndRideButton: '🏁 ರೈಡ್ ಮುಗಿಸಿ',
+  flexiEndOtpShare: (otp: string) => `🏁 ಮುಕ್ತಾಯ OTP: *${otp}*\n\nನೀವು ನಿಮ್ಮ ಗಮ್ಯಸ್ಥಾನ ತಲುಪಿದಾಗ ಇದನ್ನು ನಿಮ್ಮ ಚಾಲಕರಿಗೆ ತಿಳಿಸಿ.`,
+  flexiEndOtpNotReady: "⏳ ನಿಮ್ಮ ರೈಡ್ ಇನ್ನೂ ಪ್ರಾರಂಭವಾಗಿಲ್ಲ. ನೀವು ದಾರಿಯಲ್ಲಿ ಹೊರಟ ಕೂಡಲೇ ಮುಕ್ತಾಯ OTP ಸಿಗುತ್ತದೆ.",
+  flexiEndOtpFetchError: "⚠️ ಸದ್ಯಕ್ಕೆ ನಿಮ್ಮ ರೈಡ್ ಪಡೆಯಲಾಗಲಿಲ್ಲ. ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ ಮತ್ತೆ *ರೈಡ್ ಮುಗಿಸಿ* ಒತ್ತಿ.",
+  flexiRideAlreadyEnded: '✅ ಈ ರೈಡ್ ಈಗಾಗಲೇ ಮುಗಿದಿದೆ.',
 
   // Errors
   somethingWentWrong: 'ಏನೋ ತಪ್ಪಾಗಿದೆ. ಮತ್ತೆ ಪ್ರಾರಂಭಿಸಲು "book" ಕಳುಹಿಸಿ.',
