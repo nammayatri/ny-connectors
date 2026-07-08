@@ -19,6 +19,8 @@ export interface MerchantConfig {
   flexiPerKm?: number;    // display-only metered tariff, ₹ per km
   flexiServiceArea?: string;      // served-city name for the geofence (e.g. "Tumkur")
   flexiServiceRadiusKm?: number;  // serviceable radius around that city center (km)
+  flexiIntroVideoUrl?: string;    // how-it-works video (unset → text placeholder)
+  flexiSupportPhone?: string;     // contact-support number shown in the "More" drawer
 }
 
 export interface Config {
@@ -58,6 +60,8 @@ export interface Config {
   flexiTrackEnabled: boolean;     // run the background ride-progress tracker
   flexiTrackPollMs: number;       // how often the tracker polls each active ride
   flexiTrackMaxAgeMs: number;     // stop watching a ride after this age (safety net)
+  flexiIntroVideoUrl?: string;    // how-it-works video URL (unset → text placeholder)
+  flexiSupportPhone?: string;     // contact-support number (placeholder default)
 }
 
 // Parses REDIS_CLUSTER_NODES env var: comma-separated host:port pairs.
@@ -128,6 +132,10 @@ export const config: Config = {
   // city's center get an "outside service area" reply (E3). Unset = no geofence.
   flexiServiceArea: process.env.FLEXI_SERVICE_AREA || undefined,
   flexiServiceRadiusKm: process.env.FLEXI_SERVICE_RADIUS_KM ? parseFloat(process.env.FLEXI_SERVICE_RADIUS_KM) : undefined,
+  // How-it-works intro video (sent once on first contact + in "More"). Unset → a
+  // text placeholder is sent instead. Support number is a placeholder for now.
+  flexiIntroVideoUrl: process.env.FLEXI_INTRO_VIDEO_URL || undefined,
+  flexiSupportPhone: process.env.FLEXI_SUPPORT_PHONE || '+91 80000 00000',
   // Rental package sent for a Flexi booking. NY only returns a quote when the
   // distance fits the duration's included km (~10 km/hr), so keep km <= ~10 x hours
   // (e.g. 10 km / 60 min works; 2 km needs >= ~12 min). Defaults: 10 km / 60 min.
@@ -182,6 +190,8 @@ function loadMerchants(): void {
       flexiPerKm: process.env[`${p}FLEXI_PER_KM`] ? parseFloat(process.env[`${p}FLEXI_PER_KM`] as string) : config.flexiPerKm,
       flexiServiceArea: process.env[`${p}FLEXI_SERVICE_AREA`] || config.flexiServiceArea,
       flexiServiceRadiusKm: process.env[`${p}FLEXI_SERVICE_RADIUS_KM`] ? parseFloat(process.env[`${p}FLEXI_SERVICE_RADIUS_KM`] as string) : config.flexiServiceRadiusKm,
+      flexiIntroVideoUrl: process.env[`${p}FLEXI_INTRO_VIDEO_URL`] || config.flexiIntroVideoUrl,
+      flexiSupportPhone: process.env[`${p}FLEXI_SUPPORT_PHONE`] || config.flexiSupportPhone,
     };
     if (cfg.whatsappPhoneNumberId) {
       merchantsById.set(id, cfg);
@@ -208,6 +218,8 @@ function loadMerchants(): void {
       flexiPerKm: config.flexiPerKm,
       flexiServiceArea: config.flexiServiceArea,
       flexiServiceRadiusKm: config.flexiServiceRadiusKm,
+      flexiIntroVideoUrl: config.flexiIntroVideoUrl,
+      flexiSupportPhone: config.flexiSupportPhone,
     };
     merchantsById.set('default', fallback);
     merchantsByPhoneNumberId.set(config.whatsappPhoneNumberId, fallback);

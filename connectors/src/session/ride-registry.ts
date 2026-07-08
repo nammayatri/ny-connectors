@@ -45,6 +45,9 @@ export interface RideRegistry {
   /** Fetch a single tracked ride by bookingId (null if not tracked). Used to
    *  verify a rider owns a booking before revealing its end OTP. */
   get(bookingId: string): Promise<ActiveRide | null>;
+  /** All tracked rides booked by a given user (userKey). Powers the context-aware
+   *  "Track ride" button — durable past the 30-min session, no NY call. */
+  listByUser(userKey: string): Promise<ActiveRide[]>;
   /** Atomically claim the right to notify `stage` for `bookingId`.
    *  Returns true exactly once per (booking, stage) across all pollers. */
   claimStage(bookingId: string, stage: string): Promise<boolean>;
@@ -57,6 +60,7 @@ export interface RideRegistry {
 const INDEX_KEY = 'activerides';
 const entryKey = (id: string) => `activeride:${id}`;
 const claimKey = (id: string, stage: string) => `activeride:sent:${id}:${stage}`;
+const userIndexKey = (userKey: string) => `activerides:user:${userKey}`;
 
 function ttlSeconds(): number {
   return Math.max(60, Math.round(config.flexiTrackMaxAgeMs / 1000));
@@ -75,6 +79,12 @@ export class RedisRideRegistry implements RideRegistry {
   async register(ride: ActiveRide): Promise<void> {
     await this.redis.set(entryKey(ride.bookingId), JSON.stringify(ride), 'EX', ttlSeconds());
     await this.redis.sadd(INDEX_KEY, ride.bookingId);
+    if (ride.userKey) {
+      await this.redis.sadd(userIndexKey(ride.userKey), ride.bookingId);
+      // TTL the per-user index in lockstep with the entry so an idle user's
+      // (eventually empty) index self-expires instead of lingering forever.
+      await this.redis.expire(userIndexKey(ride.userKey), ttlSeconds());
+    }
   }
 
   async list(): Promise<ActiveRide[]> {
@@ -102,16 +112,41 @@ export class RedisRideRegistry implements RideRegistry {
     if (!data) return;
     const merged = { ...(JSON.parse(data) as ActiveRide), ...patch };
     await this.redis.set(entryKey(bookingId), JSON.stringify(merged), 'EX', ttlSeconds());
+    // Bump the per-user index TTL alongside the entry (keeps them in lockstep so
+    // a long ride never loses its index before the entry expires).
+    if (merged.userKey) await this.redis.expire(userIndexKey(merged.userKey), ttlSeconds());
   }
 
   async remove(bookingId: string): Promise<void> {
+    // Read the entry first so we can also drop it from its per-user index.
+    const data = await this.redis.get(entryKey(bookingId));
+    if (data) {
+      try {
+        const userKey = (JSON.parse(data) as ActiveRide).userKey;
+        if (userKey) await this.redis.srem(userIndexKey(userKey), bookingId);
+      } catch { /* ignore parse errors */ }
+    }
     await this.redis.srem(INDEX_KEY, bookingId);
     await this.redis.del(entryKey(bookingId));
   }
 
   async get(bookingId: string): Promise<ActiveRide | null> {
     const data = await this.redis.get(entryKey(bookingId));
-    return data ? (JSON.parse(data) as ActiveRide) : null;
+    if (!data) return null;
+    try { return JSON.parse(data) as ActiveRide; } catch { return null; } // guard corrupt entries, like list()
+  }
+
+  async listByUser(userKey: string): Promise<ActiveRide[]> {
+    const ids = await this.redis.smembers(userIndexKey(userKey));
+    if (!ids.length) return [];
+    const out: ActiveRide[] = [];
+    for (const id of ids) {
+      const data = await this.redis.get(entryKey(id));
+      if (!data) { await this.redis.srem(userIndexKey(userKey), id); continue; } // prune dangling
+      try { out.push(JSON.parse(data) as ActiveRide); }
+      catch { await this.redis.srem(userIndexKey(userKey), id); }
+    }
+    return out;
   }
 
   async claimStage(bookingId: string, stage: string): Promise<boolean> {
@@ -150,6 +185,10 @@ export class MemoryRideRegistry implements RideRegistry {
       out.push(ride);
     }
     return out;
+  }
+
+  async listByUser(userKey: string): Promise<ActiveRide[]> {
+    return (await this.list()).filter((r) => r.userKey === userKey);
   }
 
   async update(bookingId: string, patch: Partial<ActiveRide>): Promise<void> {

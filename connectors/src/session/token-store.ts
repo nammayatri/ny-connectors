@@ -16,11 +16,16 @@ export interface TokenStore {
   updateLocations(userId: string, locations: any[]): Promise<void>;
   updateLanguage(userId: string, language: SupportedLanguage): Promise<void>;
   getLanguage(userId: string): Promise<SupportedLanguage | undefined>;
+  /** Has this user ever been sent the one-time how-it-works intro? (durable — the
+   *  greeting fires before any auth/token record exists, so it can't live on UserAuth.) */
+  hasSeenIntro(userId: string): Promise<boolean>;
+  markIntroSent(userId: string): Promise<void>;
   delete(userId: string): Promise<void>;
   disconnect(): Promise<void>;
 }
 
 const TOKEN_PREFIX = 'usertoken:';
+const INTRO_PREFIX = 'introsent:';
 
 export class RedisTokenStore implements TokenStore {
   private redis: RedisClient;
@@ -60,6 +65,15 @@ export class RedisTokenStore implements TokenStore {
     return existing?.language;
   }
 
+  async hasSeenIntro(userId: string): Promise<boolean> {
+    return (await this.redis.get(`${INTRO_PREFIX}${userId}`)) !== null;
+  }
+
+  async markIntroSent(userId: string): Promise<void> {
+    // No TTL — a durable, standalone key independent of the auth token record.
+    await this.redis.set(`${INTRO_PREFIX}${userId}`, '1');
+  }
+
   async delete(userId: string): Promise<void> {
     await this.redis.del(`${TOKEN_PREFIX}${userId}`);
   }
@@ -72,6 +86,7 @@ export class RedisTokenStore implements TokenStore {
 // In-memory fallback for dev/no-redis environments. Not persisted across restarts.
 export class MemoryTokenStore implements TokenStore {
   private tokens = new Map<string, UserAuth>();
+  private introSeen = new Set<string>();
 
   async get(userId: string): Promise<UserAuth | null> {
     return this.tokens.get(userId) || null;
@@ -95,6 +110,14 @@ export class MemoryTokenStore implements TokenStore {
 
   async getLanguage(userId: string): Promise<SupportedLanguage | undefined> {
     return this.tokens.get(userId)?.language;
+  }
+
+  async hasSeenIntro(userId: string): Promise<boolean> {
+    return this.introSeen.has(userId);
+  }
+
+  async markIntroSent(userId: string): Promise<void> {
+    this.introSeen.add(userId);
   }
 
   async delete(userId: string): Promise<void> {

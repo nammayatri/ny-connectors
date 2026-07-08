@@ -186,6 +186,15 @@ export const gu: LanguageStrings = {
   flexiEndOtpFetchError: "⚠️ અત્યારે તમારી રાઈડ મળી શકી નહીં. થોડી વારમાં ફરીથી *રાઈડ સમાપ્ત કરો* પર ટૅપ કરો.",
   flexiRideAlreadyEnded: '✅ આ રાઈડ પહેલેથી સમાપ્ત થઈ ગઈ છે.',
 
+  // Flexi "hi" મેનૂ — More ડ્રોઅર + કેવી રીતે કામ કરે છે + સહાય
+  flexiMore: '⚙️ વધુ',
+  flexiMoreTitle: 'તમે શું કરવા માગો છો?',
+  flexiHowItWorks: '❓ કેવી રીતે કામ કરે',
+  flexiContactSupport: '💬 સહાય',
+  flexiHowItWorksText: "📹 *Namma Yatri કેવી રીતે કામ કરે છે*\n\n1️⃣ *રાઈડ બુક કરો* દબાવો\n2️⃣ તમારું પિકઅપ સ્થાન શેર કરો 📍\n3️⃣ અમે તમારી નજીક એક ઓટો શોધીએ છીએ\n4️⃣ તમારા ડ્રાઈવરને મળો, OTP આપો, અને ચાલો!\n\n_(પરિચય વીડિયો ટૂંક સમયમાં આવી રહ્યો છે.)_",
+  flexiHowItWorksCaption: 'Namma Yatri પર ઓટો કેવી રીતે બુક કરવો 🛺',
+  flexiSupportMessage: (phone: string) => `💬 મદદ જોઈએ છે?\n\nઅમને કૉલ કરો: ${phone}\n\nઅમે તમારી મદદ માટે અહીં છીએ. 🙏`,
+
   // Errors
   somethingWentWrong: 'કંઈક ખોટું થયું. ફરીથી શરૂ કરવા "book" મોકલો.',
   sessionExpired: 'સત્ર સમાપ્ત થયું. ફરીથી પ્રમાણિત થવા "book" મોકલો.',

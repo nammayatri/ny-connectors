@@ -188,6 +188,15 @@ export const hi: LanguageStrings = {
   flexiEndOtpFetchError: "⚠️ अभी आपकी राइड नहीं मिल पाई। थोड़ी देर में फिर से *राइड समाप्त करें* पर टैप करें।",
   flexiRideAlreadyEnded: '✅ यह राइड पहले ही समाप्त हो चुकी है।',
 
+  // Flexi "hi" मेनू — More ड्रॉअर + यह कैसे काम करता है + सहायता
+  flexiMore: '⚙️ और',
+  flexiMoreTitle: 'आप क्या करना चाहेंगे?',
+  flexiHowItWorks: '❓ यह कैसे काम करता है',
+  flexiContactSupport: '💬 सहायता',
+  flexiHowItWorksText: "📹 *Namma Yatri कैसे काम करता है*\n\n1️⃣ *राइड बुक करें* पर टैप करें\n2️⃣ अपना पिकअप स्थान साझा करें 📍\n3️⃣ हम आपके पास एक ऑटो ढूँढते हैं\n4️⃣ अपने ड्राइवर से मिलें, OTP बताएँ, और चलें!\n\n_(परिचय वीडियो जल्द आ रहा है।)_",
+  flexiHowItWorksCaption: 'Namma Yatri पर ऑटो कैसे बुक करें 🛺',
+  flexiSupportMessage: (phone: string) => `💬 मदद चाहिए?\n\nहमें कॉल करें: ${phone}\n\nहम आपकी मदद के लिए यहाँ हैं। 🙏`,
+
   // Errors
   somethingWentWrong: 'कुछ गड़बड़ हो गई। दोबारा शुरू करने के लिए "book" भेजें।',
   sessionExpired: 'सत्र समाप्त हो गया। पुनः प्रमाणित करने के लिए "book" भेजें।',

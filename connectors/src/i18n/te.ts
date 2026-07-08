@@ -186,6 +186,15 @@ export const te: LanguageStrings = {
   flexiEndOtpFetchError: "⚠️ ప్రస్తుతం మీ రైడ్‌ను పొందలేకపోయాం. కొద్దిసేపటి తర్వాత మళ్లీ *రైడ్ ముగించండి* నొక్కండి.",
   flexiRideAlreadyEnded: '✅ ఈ రైడ్ ఇప్పటికే ముగిసింది.',
 
+  // Flexi "hi" మెను — More డ్రాయర్ + ఇది ఎలా పనిచేస్తుంది + మద్దతు
+  flexiMore: '⚙️ మరిన్ని',
+  flexiMoreTitle: 'మీరు ఏమి చేయాలనుకుంటున్నారు?',
+  flexiHowItWorks: '❓ ఇది ఎలా పనిచేస్తుంది',
+  flexiContactSupport: '💬 మద్దతు',
+  flexiHowItWorksText: "📹 *Namma Yatri ఎలా పనిచేస్తుంది*\n\n1️⃣ *రైడ్ బుక్ చేయండి* నొక్కండి\n2️⃣ మీ పికప్ ప్రదేశం షేర్ చేయండి 📍\n3️⃣ మేము మీ దగ్గర ఆటోను కనుగొంటాము\n4️⃣ మీ డ్రైవర్‌ను కలవండి, OTP చెప్పండి, బయలుదేరండి!\n\n_(పరిచయ వీడియో త్వరలో వస్తోంది.)_",
+  flexiHowItWorksCaption: 'Namma Yatri లో ఆటో ఎలా బుక్ చేయాలి 🛺',
+  flexiSupportMessage: (phone: string) => `💬 సహాయం కావాలా?\n\nమాకు కాల్ చేయండి: ${phone}\n\nమీకు సహాయం చేయడానికి మేము ఇక్కడ ఉన్నాము. 🙏`,
+
   // Errors
   somethingWentWrong: 'ఏదో తప్పు జరిగింది. మళ్ళీ ప్రారంభించడానికి "book" పంపండి.',
   sessionExpired: 'సెషన్ గడువు ముగిసింది. మళ్ళీ ప్రామాణీకరించడానికి "book" పంపండి.',

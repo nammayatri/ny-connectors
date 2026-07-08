@@ -190,6 +190,17 @@ export class WhatsAppConnector implements Connector {
     }, merchant);
   }
 
+  // Sends a video by hosted URL (WhatsApp fetches the link). Used for the
+  // one-time how-it-works intro. Returns true if WhatsApp accepted it.
+  async sendVideo(chatId: string, link: string, caption?: string, merchant?: MerchantConfig): Promise<boolean> {
+    return this.sendWhatsApp(chatId, {
+      messaging_product: 'whatsapp',
+      to: chatId,
+      type: 'video',
+      video: { link, ...(caption ? { caption } : {}) },
+    }, merchant);
+  }
+
   // Returns true if WhatsApp accepted the message. Callers that need to retry
   // (the background ride tracker) rely on this; interactive-flow callers can
   // ignore it. Never throws — a network/API failure resolves to false.

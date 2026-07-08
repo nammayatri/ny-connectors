@@ -182,6 +182,14 @@ export interface LanguageStrings {
   flexiEndOtpNotReady: string;
   flexiEndOtpFetchError: string;
   flexiRideAlreadyEnded: string;
+  // Flexi "hi" menu — More drawer + how-it-works + support
+  flexiMore: string;
+  flexiMoreTitle: string;
+  flexiHowItWorks: string;
+  flexiContactSupport: string;
+  flexiHowItWorksText: string;
+  flexiHowItWorksCaption: string;
+  flexiSupportMessage: (phone: string) => string;
 
   // Errors
   somethingWentWrong: string;

@@ -185,6 +185,14 @@ export const en: LanguageStrings = {
   flexiEndOtpNotReady: "⏳ Your ride hasn't started yet. You'll get the end OTP once you're on your way.",
   flexiEndOtpFetchError: "⚠️ Couldn't fetch your ride just now. Tap *End ride* again in a moment.",
   flexiRideAlreadyEnded: '✅ This ride has already ended.',
+  // Flexi "hi" menu — More drawer + how-it-works + support
+  flexiMore: '⚙️ More',
+  flexiMoreTitle: 'What would you like to do?',
+  flexiHowItWorks: '❓ How it works',
+  flexiContactSupport: '💬 Support',
+  flexiHowItWorksText: "📹 *How Namma Yatri works*\n\n1️⃣ Tap *Book a Ride*\n2️⃣ Share your pickup location 📍\n3️⃣ We find you a nearby auto\n4️⃣ Meet your driver, share the OTP, and go!\n\n_(Intro video coming soon.)_",
+  flexiHowItWorksCaption: 'How to book an auto on Namma Yatri 🛺',
+  flexiSupportMessage: (phone: string) => `💬 Need help?\n\nCall us: ${phone}\n\nWe're here to help. 🙏`,
 
   // Errors
   somethingWentWrong: 'Something went wrong. Send "book" to start over.',

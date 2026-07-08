@@ -1,5 +1,5 @@
 import { FlowContext, INITIAL_CONTEXT } from './states';
-import { buildDriverCard } from './flexi-messages';
+import { buildDriverCard, formatDialable, classifyStage } from './flexi-messages';
 import { NammaYatriClient, NYPlaceDetails, NYFlexiQuote, NYRideHistoryItem } from '../ny';
 import { isWithinServiceArea } from '../ny/cities';
 import { SessionManager } from '../session/manager';
@@ -121,10 +121,12 @@ export class FlowEngine {
           const newS = t(langCode);
           await replyWithButtons(
             newS.languageUpdated(newS.nativeLanguageName) + newS.whatToDo,
-            [[
-              { text: newS.bookARide, data: 'book' },
-              { text: newS.trackRide, data: 'status' },
-            ]]
+            this.isFlexi(message)
+              ? await this.flexiMenuRow(message, newS)
+              : [[
+                  { text: newS.bookARide, data: 'book' },
+                  { text: newS.trackRide, data: 'status' },
+                ]]
           );
         }
         return;
@@ -155,7 +157,7 @@ export class FlowEngine {
       if (input === 'main_menu') {
         await this.resetContext(message);
         if (this.isFlexi(message)) {
-          await replyWithButtons(s.flexiWelcome, [[{ text: s.bookARide, data: 'book' }]]);
+          await replyWithButtons(s.flexiWelcome, await this.flexiMenuRow(message, s));
         } else {
           await replyWithButtons(
             s.welcomeBack,
@@ -355,6 +357,26 @@ export class FlowEngine {
         return;
       }
 
+      // FLEXI: the "More" drawer (Language / How it works / Support) and its items.
+      if (this.isFlexi(message) && input === 'more') {
+        await replyWithButtons(s.flexiMoreTitle, [[
+          { text: s.chooseLanguage, data: 'choose_language' },
+          { text: s.flexiHowItWorks, data: 'help' },
+          { text: s.flexiContactSupport, data: 'support' },
+        ]]);
+        return;
+      }
+      if (this.isFlexi(message) && input === 'help') {
+        await this.sendHowItWorks(message, connector, reply, s);
+        return;
+      }
+      if (this.isFlexi(message) && input === 'support') {
+        const supportMerchant = this.getMerchantConfig(message);
+        const raw = supportMerchant?.flexiSupportPhone ?? config.flexiSupportPhone ?? '';
+        await reply(s.flexiSupportMessage(formatDialable(raw) ?? raw));
+        return;
+      }
+
       if (input === 'call_driver' && ctx.nyToken) {
         const client = new NammaYatriClient(ctx.nyToken);
         const createdAfter = ctx.selectStartedAt ? new Date(ctx.selectStartedAt) : undefined;
@@ -517,7 +539,18 @@ export class FlowEngine {
         return;
       }
       if (this.isFlexi(msg)) {
-        await replyWithButtons(s.flexiWelcome, [[{ text: s.bookARide, data: 'book' }]]);
+        const introKey = this.scopedUserKey(msg);
+        // First-ever contact: send the how-it-works intro once, unprompted.
+        // Fail-open: a store blip must never block the greeting menu below.
+        try {
+          if (!(await this.tokenStore.hasSeenIntro(introKey))) {
+            await this.sendHowItWorks(msg, connector, reply, s);
+            await this.tokenStore.markIntroSent(introKey);
+          }
+        } catch (err: any) {
+          console.warn(`[flexi] intro check/send failed: ${err?.message || err}`);
+        }
+        await replyWithButtons(s.flexiWelcome, await this.flexiMenuRow(msg, s));
       } else {
         await replyWithButtons(
           s.welcomeMessage,
@@ -1936,8 +1969,17 @@ export class FlowEngine {
       ? new Date(ctx.selectStartedAt)
       : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
 
-    const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
-    if (!bookings.length) {
+    let b: any;
+    if (this.isFlexi(msg)) {
+      // Flexi: read the KNOWN booking via getBookingDetails (handles INPROGRESS,
+      // which getActiveBookings drops) sourced from the durable registry, so
+      // tracking works mid-ride.
+      b = await this.resolveFlexiActiveBooking(msg, client);
+    } else {
+      const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
+      b = bookings[0];
+    }
+    if (!b) {
       await this.resetContext(msg);
       await replyWithButtons(
         s.noActiveRidesBook,
@@ -1946,7 +1988,6 @@ export class FlowEngine {
       return;
     }
 
-    const b = bookings[0];
     const ride = b.rideList?.[0];
     const rideStatus = ride?.status?.toUpperCase();
     const driverName = b.driverName || ride?.driverName;
@@ -1987,12 +2028,20 @@ export class FlowEngine {
       ? new Date(ctx.selectStartedAt)
       : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
 
-    const allBookings = await client.getActiveBookings(createdAfter);
-    const bookings = allBookings.sort((a: any, b2: any) =>
-      new Date(b2.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
-    );
+    let b: any;
+    if (this.isFlexi(msg)) {
+      // Flexi: getBookingDetails on the registry-known booking (survives INPROGRESS,
+      // which getActiveBookings excludes). bookingId is the rider's own → no IDOR.
+      b = await this.resolveFlexiActiveBooking(msg, client);
+    } else {
+      const allBookings = await client.getActiveBookings(createdAfter);
+      const bookings = allBookings.sort((a: any, b2: any) =>
+        new Date(b2.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
+      );
+      b = bookings[0];
+    }
 
-    if (!bookings.length) {
+    if (!b) {
       await this.resetContext(msg);
       if (replyWithButtons) {
         await replyWithButtons(
@@ -2005,7 +2054,6 @@ export class FlowEngine {
       return;
     }
 
-    const b = bookings[0];
     const ride = b.rideList?.[0];
     const driverName = b.driverName || ride?.driverName;
     const vehicleNumber = b.vehicleNumber || ride?.vehicleNumber;
@@ -2132,7 +2180,7 @@ export class FlowEngine {
     // Flexi is button-only and self-contained — never offer the (non-flexi)
     // Track Ride path, which would drop the rider out of the flexi surface.
     const buttons = this.isFlexi(msg)
-      ? [[{ text: s.bookARide, data: 'book' }]]
+      ? await this.flexiMenuRow(msg, s)
       : [[
           { text: s.bookARide, data: 'book' },
           { text: s.trackRide, data: 'status' },
@@ -2382,6 +2430,62 @@ export class FlowEngine {
   /** Whether the Flexi (location-only metered) flow is enabled for this merchant. */
   private isFlexi(msg: CommandMessage): boolean {
     return this.getMerchantConfig(msg)?.flexiEnabled === true;
+  }
+
+  /** True if this rider has a ride the tracker is still watching (durable — no NY
+   *  call, survives the 30-min session). Gates the context-aware Track button. */
+  private async hasActiveRide(msg: CommandMessage): Promise<boolean> {
+    try {
+      const rides = await this.rideRegistry.listByUser(this.scopedUserKey(msg));
+      return rides.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The Flexi greeting/menu button row: [Track?] Book More — Track only when a
+   *  ride is live. Kept to <=3 buttons, no descriptions (stays reply-buttons). */
+  private async flexiMenuRow(msg: CommandMessage, s: ReturnType<typeof t>): Promise<{ text: string; data: string }[][]> {
+    const row: { text: string; data: string }[] = [];
+    if (await this.hasActiveRide(msg)) row.push({ text: s.trackRide, data: 'status' });
+    row.push({ text: s.bookARide, data: 'book' });
+    row.push({ text: s.flexiMore, data: 'more' });
+    return [row];
+  }
+
+  /** Sends the how-it-works intro: the configured video (if any) + the text steps.
+   *  Falls back to text-only when no video URL is set or the channel isn't WhatsApp. */
+  private async sendHowItWorks(
+    msg: CommandMessage,
+    connector: Connector | undefined,
+    reply: (txt: string) => Promise<void>,
+    s: ReturnType<typeof t>,
+  ): Promise<void> {
+    const merchant = this.getMerchantConfig(msg);
+    const videoUrl = merchant?.flexiIntroVideoUrl ?? config.flexiIntroVideoUrl;
+    if (videoUrl && connector instanceof WhatsAppConnector) {
+      const chatId = this.getReplyTarget(msg, connector);
+      await connector.sendVideo(chatId, videoUrl, s.flexiHowItWorksCaption, merchant);
+    }
+    await reply(s.flexiHowItWorksText);
+  }
+
+  /** Resolve the rider's live booking for the Flexi Track flow via the durable
+   *  registry (their OWN bookingId) + getBookingDetails. Returns null when there
+   *  is no active ride or the registry entry is stale (already ended/cancelled). */
+  private async resolveFlexiActiveBooking(msg: CommandMessage, client: NammaYatriClient): Promise<any | null> {
+    const rides = await this.rideRegistry.listByUser(this.scopedUserKey(msg)).catch(() => []);
+    // Newest first — a rider could (rarely) hold more than one registry entry.
+    rides.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const bookingId = rides[0]?.bookingId;
+    if (!bookingId) return null;
+    const b = await client.getBookingDetails(bookingId, { allowListFallback: false }).catch(() => null);
+    if (!b) return null;
+    // Reuse the tracker's terminal detection (checks ride+booking status + rideEndTime).
+    // 'none' (booking made, driver not yet assigned) is still a live ride — keep it.
+    const stage = classifyStage(b);
+    if (stage === 'completed' || stage === 'cancelled') return null;
+    return b;
   }
 
   /** Build a merchant-scoped user key for session/token store lookups.

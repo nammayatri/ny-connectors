@@ -186,6 +186,15 @@ export const kn: LanguageStrings = {
   flexiEndOtpFetchError: "⚠️ ಸದ್ಯಕ್ಕೆ ನಿಮ್ಮ ರೈಡ್ ಪಡೆಯಲಾಗಲಿಲ್ಲ. ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ ಮತ್ತೆ *ರೈಡ್ ಮುಗಿಸಿ* ಒತ್ತಿ.",
   flexiRideAlreadyEnded: '✅ ಈ ರೈಡ್ ಈಗಾಗಲೇ ಮುಗಿದಿದೆ.',
 
+  // Flexi "hi" ಮೆನು — More ಡ್ರಾಯರ್ + ಇದು ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ + ಬೆಂಬಲ
+  flexiMore: '⚙️ ಇನ್ನಷ್ಟು',
+  flexiMoreTitle: 'ನೀವು ಏನು ಮಾಡಲು ಬಯಸುತ್ತೀರಿ?',
+  flexiHowItWorks: '❓ ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ',
+  flexiContactSupport: '💬 ಬೆಂಬಲ',
+  flexiHowItWorksText: "📹 *Namma Yatri ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ*\n\n1️⃣ *ರೈಡ್ ಬುಕ್ ಮಾಡಿ* ಒತ್ತಿ\n2️⃣ ನಿಮ್ಮ ಪಿಕಪ್ ಸ್ಥಳ ಹಂಚಿಕೊಳ್ಳಿ 📍\n3️⃣ ನಾವು ನಿಮ್ಮ ಹತ್ತಿರ ಆಟೋ ಹುಡುಕುತ್ತೇವೆ\n4️⃣ ನಿಮ್ಮ ಚಾಲಕರನ್ನು ಭೇಟಿಯಾಗಿ, OTP ಹೇಳಿ, ಹೊರಡಿ!\n\n_(ಪರಿಚಯ ವೀಡಿಯೊ ಶೀಘ್ರದಲ್ಲೇ ಬರಲಿದೆ.)_",
+  flexiHowItWorksCaption: 'Namma Yatri ನಲ್ಲಿ ಆಟೋ ಹೇಗೆ ಬುಕ್ ಮಾಡುವುದು 🛺',
+  flexiSupportMessage: (phone: string) => `💬 ಸಹಾಯ ಬೇಕೇ?\n\nನಮಗೆ ಕರೆ ಮಾಡಿ: ${phone}\n\nನಿಮ್ಮ ಸಹಾಯಕ್ಕಾಗಿ ನಾವು ಇಲ್ಲಿದ್ದೇವೆ. 🙏`,
+
   // Errors
   somethingWentWrong: 'ಏನೋ ತಪ್ಪಾಗಿದೆ. ಮತ್ತೆ ಪ್ರಾರಂಭಿಸಲು "book" ಕಳುಹಿಸಿ.',
   sessionExpired: 'ಸೆಶನ್ ಅವಧಿ ಮುಗಿದಿದೆ. ಮರು-ದೃಢೀಕರಿಸಲು "book" ಕಳುಹಿಸಿ.',
