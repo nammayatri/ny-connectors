@@ -148,13 +148,13 @@ export const gu: LanguageStrings = {
   markSafeFailed: (err: string) => `સુરક્ષિત ચિહ્નિત કરી શકાયું નથી: ${err}`,
 
   // Flexi (location-only metered booking)
-  flexiWelcome: '🙏 નમસ્તે! હું તમારો Namma Yatri સહાયક છું\n\nઓટો બુક કરવા તૈયાર છો?',
+  welcome: '🙏 નમસ્તે! હું તમારો Namma Yatri સહાયક છું\n\nઓટો બુક કરવા તૈયાર છો?',
   flexiSharePrompt: 'ડ્રાઈવર તમને ક્યાંથી લેશે? 📍',
   flexiFareRate: (base: number, perKm: number) => `🛺 મીટર ઓટો · ₹${base} + ₹${perKm}/કિમીથી`,
   flexiConfirmPickup: (address: string) => `📍 તમારું લોકેશન: *${address}* પાસે.\n\nઆગળ વધીએ?`,
   flexiConfirmSavedPlace: (name: string) => `📍 તમે એક સેવ કરેલી જગ્યા મોકલી:\n *${name}*.\nઆગળ વધીએ?`,
-  flexiConfirmButton: '✅ પિકઅપ કન્ફર્મ કરો',
-  flexiAdjustButton: '✏️ જગ્યા બદલો',
+  pickupConfirmButton: '✅ પિકઅપ કન્ફર્મ કરો',
+  pickupAdjustButton: '✏️ જગ્યા બદલો',
   flexiFinding: '🛺 તમારી નજીક ઓટો શોધી રહ્યા છીએ…',
   flexiStillFinding: (elapsed: number) => `⏳ હજુ પણ તમારી નજીક ઓટો શોધી રહ્યા છીએ… (${elapsed} સેકંડ)\n\nરોકવા માટે "cancel" મોકલો.`,
   flexiCancelSearch: '❌ શોધ રોકો',
@@ -187,13 +187,28 @@ export const gu: LanguageStrings = {
   flexiRideAlreadyEnded: '✅ આ રાઈડ પહેલેથી સમાપ્ત થઈ ગઈ છે.',
 
   // Flexi "hi" મેનૂ — More ડ્રોઅર + કેવી રીતે કામ કરે છે + સહાય
-  flexiMore: '⚙️ વધુ',
-  flexiMoreTitle: 'તમે શું કરવા માગો છો?',
-  flexiHowItWorks: '❓ કેવી રીતે કામ કરે',
-  flexiContactSupport: '💬 સહાય',
-  flexiHowItWorksText: "📹 *Namma Yatri કેવી રીતે કામ કરે છે*\n\n1️⃣ *રાઈડ બુક કરો* દબાવો\n2️⃣ તમારું પિકઅપ સ્થાન શેર કરો 📍\n3️⃣ અમે તમારી નજીક એક ઓટો શોધીએ છીએ\n4️⃣ તમારા ડ્રાઈવરને મળો, OTP આપો, અને ચાલો!\n\n_(પરિચય વીડિયો ટૂંક સમયમાં આવી રહ્યો છે.)_",
-  flexiHowItWorksCaption: 'Namma Yatri પર ઓટો કેવી રીતે બુક કરવો 🛺',
-  flexiSupportMessage: (phone: string) => `💬 મદદ જોઈએ છે?\n\nઅમને કૉલ કરો: ${phone}\n\nઅમે તમારી મદદ માટે અહીં છીએ. 🙏`,
+  moreButton: '⚙️ વધુ',
+  moreTitle: 'તમે શું કરવા માગો છો?',
+  howItWorks: '❓ કેવી રીતે કામ કરે',
+  contactSupport: '💬 સહાય',
+  howItWorksText: "📹 *Namma Yatri કેવી રીતે કામ કરે છે*\n\n1️⃣ *રાઈડ બુક કરો* દબાવો\n2️⃣ તમારું પિકઅપ સ્થાન શેર કરો 📍\n3️⃣ અમે તમારી નજીક એક ઓટો શોધીએ છીએ\n4️⃣ તમારા ડ્રાઈવરને મળો, OTP આપો, અને ચાલો!\n\n_(પરિચય વીડિયો ટૂંક સમયમાં આવી રહ્યો છે.)_",
+  howItWorksCaption: 'Namma Yatri પર ઓટો કેવી રીતે બુક કરવો 🛺',
+  supportMessage: (phone: string) => `💬 મદદ જોઈએ છે?\n\nઅમને કૉલ કરો: ${phone}\n\nઅમે તમારી મદદ માટે અહીં છીએ. 🙏`,
+
+  // રાઈડ-પ્રકાર પસંદગી + સામાન્ય રાઈડ-શરૂ
+  rideTypePrompt: 'તમે કેવી રીતે મુસાફરી કરવા માગો છો?',
+  rideTypeFlexi: '🛺 ફ્લેક્સી',
+  rideTypeRegular: '🚗 રેગ્યુલર',
+  rideStartedSimple: '🚦 તમારી રાઈડ શરૂ થઈ ગઈ છે. મુસાફરીનો આનંદ માણો!',
+
+  // સામાન્ય વન-વે ફ્લો (પિકઅપ + ડ્રોપ → ઓટો ભાડું → બુક)
+  regularDropPrompt: 'તમારે ક્યાં જવું છે? 📍\n\nતમારું ડ્રોપ લોકેશન શેર કરો, અથવા સરનામું ટાઈપ કરો.',
+  regularSelectDrop: 'કઈ? તમારું ડ્રોપ પસંદ કરો:',
+  regularFareConfirm: (fare: number, area: string) => `🛺 *${area}* સુધી ઓટો\n💰 આશરે *₹${fare}*\n\nબુક કરી દઉં?`,
+  regularConfirmButton: '✅ ઓટો બુક કરો',
+  regularChangeDropButton: '✏️ ડ્રોપ બદલો',
+  regularSearching: '🛺 તમારું ભાડું લાવી રહ્યા છીએ…',
+  regularBooking: '🛺 તમારો ઓટો બુક કરી રહ્યા છીએ…',
 
   // Errors
   somethingWentWrong: 'કંઈક ખોટું થયું. ફરીથી શરૂ કરવા "book" મોકલો.',

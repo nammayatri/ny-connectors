@@ -10,9 +10,13 @@ export type FlowState =
   | 'AWAITING_DESTINATION'
   | 'CONFIRMING_DESTINATION'
   | 'SEARCHING_RIDES'
-  | 'AWAITING_FLEXI_LOCATION'
-  | 'CONFIRMING_FLEXI_LOCATION'
+  | 'AWAITING_PICKUP'
+  | 'CONFIRMING_PICKUP'
   | 'FLEXI_SEARCHING'
+  | 'AWAITING_REGULAR_DROP'
+  | 'CONFIRMING_REGULAR_DROP'
+  | 'CONFIRMING_REGULAR_FARE'
+  | 'REGULAR_SEARCHING'
   | 'SHOWING_ESTIMATES'
   | 'BOOKING'
   | 'TRACKING'
@@ -49,10 +53,15 @@ export interface FlowContext {
   language?: SupportedLanguage;
   authId?: string;             // from POST /v2/auth during registration
   pendingAction?: 'status';    // deferred action to run after authentication
+  rideType?: 'flexi' | 'regular';  // chosen ride type for this booking (friction-free merchants)
   // Flexi (location-only metered booking)
   flexiSearchId?: string;
   flexiQuoteId?: string;
   flexiBookingId?: string;
+  // Regular (friction-free one-way auto: pickup + drop → estimate → book)
+  regularSearchId?: string;
+  regularEstimateId?: string;
+  regularFare?: number;
 }
 
 export const INITIAL_CONTEXT: FlowContext = {

@@ -1,6 +1,6 @@
 import { FlowContext, INITIAL_CONTEXT } from './states';
 import { buildDriverCard, formatDialable, classifyStage } from './flexi-messages';
-import { NammaYatriClient, NYPlaceDetails, NYFlexiQuote, NYRideHistoryItem } from '../ny';
+import { NammaYatriClient, NYPlaceDetails, NYFlexiQuote, NYEstimate, NYRideHistoryItem } from '../ny';
 import { isWithinServiceArea } from '../ny/cities';
 import { SessionManager } from '../session/manager';
 import { MemorySessionManager } from '../session/memory-store';
@@ -121,12 +121,7 @@ export class FlowEngine {
           const newS = t(langCode);
           await replyWithButtons(
             newS.languageUpdated(newS.nativeLanguageName) + newS.whatToDo,
-            this.isFlexi(message)
-              ? await this.flexiMenuRow(message, newS)
-              : [[
-                  { text: newS.bookARide, data: 'book' },
-                  { text: newS.trackRide, data: 'status' },
-                ]]
+            await this.menuRow(message, newS),
           );
         }
         return;
@@ -156,17 +151,10 @@ export class FlowEngine {
 
       if (input === 'main_menu') {
         await this.resetContext(message);
-        if (this.isFlexi(message)) {
-          await replyWithButtons(s.flexiWelcome, await this.flexiMenuRow(message, s));
-        } else {
-          await replyWithButtons(
-            s.welcomeBack,
-            [[
-              { text: s.bookARide, data: 'book' },
-              { text: s.trackRide, data: 'status' },
-            ]]
-          );
-        }
+        await replyWithButtons(
+          this.isFrictionFree(message) ? s.welcome : s.welcomeBack,
+          await this.menuRow(message, s),
+        );
         return;
       }
 
@@ -190,10 +178,7 @@ export class FlowEngine {
         if (bookingId && ctx.nyToken) {
           try {
             const client = new NammaYatriClient(ctx.nyToken);
-            const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-            const createdAfter = ctx.selectStartedAt
-              ? new Date(ctx.selectStartedAt)
-              : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
+            const createdAfter = this.getCreatedAfterDate(ctx);
             const bookings = await client.getActiveBookings(createdAfter);
             const booking = bookings.find((b: any) => b.id === bookingId) || bookings[0];
             const driverName = booking?.rideList?.[0]?.driverName || booking?.driverName;
@@ -306,14 +291,41 @@ export class FlowEngine {
 
       // FLEXI: confirm/adjust the shared pickup (screen 04). Top-level so they
       // work regardless of the resumed state after a session hydrate.
-      if (input === 'flexi_confirm' && ctx.nyToken && ctx.origin && ctx.state === 'CONFIRMING_FLEXI_LOCATION') {
-        // Guard on state so a double-tap can't launch two searches/bookings.
-        await this.startFlexiSearch(ctx, message, reply, replyWithButtons, connector);
+      // Ride-type chooser (shown when a merchant offers both Flexi and Regular).
+      if (input.startsWith('ride_type:') && ctx.nyToken) {
+        const rt = input.slice('ride_type:'.length);
+        if (rt === 'flexi' || rt === 'regular') {
+          ctx.rideType = rt;
+          await this.saveContext(message, ctx);
+          await this.promptForPickup(ctx, message, reply, connector);
+        }
         return;
       }
-      if (input === 'flexi_adjust') {
+      if (input === 'pickup_confirm' && ctx.nyToken && ctx.origin && ctx.state === 'CONFIRMING_PICKUP') {
+        // Guard on state so a double-tap can't launch two searches/bookings.
+        // Flexi searches immediately; Regular asks for a drop, then estimates + books.
+        // Default for a pin shared straight from IDLE (no chooser): regular-only
+        // merchants → regular, otherwise flexi.
+        const rideType = ctx.rideType ?? (this.regularOffered(message) && !this.flexiOffered(message) ? 'regular' : 'flexi');
+        if (rideType === 'regular') {
+          await this.promptForRegularDrop(ctx, message, reply, connector);
+        } else {
+          await this.startFlexiSearch(ctx, message, reply, replyWithButtons, connector);
+        }
+        return;
+      }
+      if (input === 'pickup_adjust') {
         // "Change location" → re-open location sharing directly, as a minimal bubble.
-        await this.promptForFlexiLocation(ctx, message, reply, connector, { suppressFare: true });
+        await this.promptForPickup(ctx, message, reply, connector, { suppressFare: true });
+        return;
+      }
+      // Regular one-way: confirm the auto fare → book, or change the drop.
+      if (input === 'regular_book' && ctx.nyToken && ctx.regularEstimateId && ctx.state === 'CONFIRMING_REGULAR_FARE') {
+        await this.confirmRegularBooking(ctx, message, reply, replyWithButtons, connector);
+        return;
+      }
+      if (input === 'regular_change_drop' && ctx.nyToken) {
+        await this.promptForRegularDrop(ctx, message, reply, connector);
         return;
       }
 
@@ -358,22 +370,24 @@ export class FlowEngine {
       }
 
       // FLEXI: the "More" drawer (Language / How it works / Support) and its items.
-      if (this.isFlexi(message) && input === 'more') {
-        await replyWithButtons(s.flexiMoreTitle, [[
+      if (this.isFrictionFree(message) && input === 'more') {
+        await replyWithButtons(s.moreTitle, [[
           { text: s.chooseLanguage, data: 'choose_language' },
-          { text: s.flexiHowItWorks, data: 'help' },
-          { text: s.flexiContactSupport, data: 'support' },
+          { text: s.howItWorks, data: 'help' },
+          { text: s.contactSupport, data: 'support' },
         ]]);
         return;
       }
-      if (this.isFlexi(message) && input === 'help') {
+      if (this.isFrictionFree(message) && input === 'help') {
         await this.sendHowItWorks(message, connector, reply, s);
+        await replyWithButtons(s.moreTitle, await this.menuRow(message, s)); // loop back to the menu
         return;
       }
-      if (this.isFlexi(message) && input === 'support') {
+      if (this.isFrictionFree(message) && input === 'support') {
         const supportMerchant = this.getMerchantConfig(message);
         const raw = supportMerchant?.flexiSupportPhone ?? config.flexiSupportPhone ?? '';
-        await reply(s.flexiSupportMessage(formatDialable(raw) ?? raw));
+        await reply(s.supportMessage(formatDialable(raw) ?? raw));
+        await replyWithButtons(s.moreTitle, await this.menuRow(message, s)); // loop back to the menu
         return;
       }
 
@@ -431,9 +445,9 @@ export class FlowEngine {
       // FLEXI: a shared location pin (from IDLE or the flexi prompt) starts the
       // location-only booking. Bypasses the pickup→drop pin handlers, which the
       // flexi flow never reaches.
-      if (this.isFlexi(message) && input === '__location_pin__' &&
-          (ctx.state === 'IDLE' || ctx.state === 'AWAITING_FLEXI_LOCATION' || ctx.state === 'CONFIRMING_FLEXI_LOCATION')) {
-        await this.handleFlexiLocation(ctx, message, reply, replyWithButtons, connector);
+      if (this.isFrictionFree(message) && input === '__location_pin__' &&
+          (ctx.state === 'IDLE' || ctx.state === 'AWAITING_PICKUP' || ctx.state === 'CONFIRMING_PICKUP')) {
+        await this.handlePickup(ctx, message, reply, replyWithButtons, connector);
         return;
       }
 
@@ -468,14 +482,26 @@ export class FlowEngine {
         case 'BOOKING':
           await reply(s.rideBeingBooked);
           break;
-        case 'AWAITING_FLEXI_LOCATION':
-          await this.promptForFlexiLocation(ctx, message, reply, connector);
+        case 'AWAITING_PICKUP':
+          await this.promptForPickup(ctx, message, reply, connector);
           break;
-        case 'CONFIRMING_FLEXI_LOCATION':
-          await this.sendFlexiConfirm(ctx, message, replyWithButtons);
+        case 'CONFIRMING_PICKUP':
+          await this.sendPickupConfirm(ctx, message, replyWithButtons);
           break;
         case 'FLEXI_SEARCHING':
           await reply(s.flexiFinding);
+          break;
+        case 'AWAITING_REGULAR_DROP':
+          await this.handleRegularDrop(ctx, input, message, reply, replyWithButtons, connector);
+          break;
+        case 'CONFIRMING_REGULAR_DROP':
+          await this.handleConfirmingRegularDrop(ctx, input, message, reply, replyWithButtons, connector);
+          break;
+        case 'CONFIRMING_REGULAR_FARE':
+          await this.sendRegularFareConfirm(ctx, message, replyWithButtons);
+          break;
+        case 'REGULAR_SEARCHING':
+          await reply(s.regularSearching);
           break;
         case 'TRACKING':
           await this.handleTracking(ctx, message, reply, replyWithButtons);
@@ -538,7 +564,7 @@ export class FlowEngine {
         await this.handleQuickRoute(ctx, quickMatch[1], quickMatch[2], msg, reply, replyWithButtons);
         return;
       }
-      if (this.isFlexi(msg)) {
+      if (this.isFrictionFree(msg)) {
         const introKey = this.scopedUserKey(msg);
         // First-ever contact: send the how-it-works intro once, unprompted.
         // Fail-open: a store blip must never block the greeting menu below.
@@ -550,16 +576,9 @@ export class FlowEngine {
         } catch (err: any) {
           console.warn(`[flexi] intro check/send failed: ${err?.message || err}`);
         }
-        await replyWithButtons(s.flexiWelcome, await this.flexiMenuRow(msg, s));
+        await replyWithButtons(s.welcome, await this.menuRow(msg, s));
       } else {
-        await replyWithButtons(
-          s.welcomeMessage,
-          [[
-            { text: s.bookARide, data: 'book' },
-            { text: s.trackRide, data: 'status' },
-            { text: s.chooseLanguage, data: 'choose_language' },
-          ]]
-        );
+        await replyWithButtons(s.welcomeMessage, await this.menuRow(msg, s, { includeLanguage: true }));
       }
       return;
     }
@@ -609,7 +628,7 @@ export class FlowEngine {
           });
 
           // Flexi jumps straight to the location prompt — skip the extra "all set" bubble.
-          if (!this.isFlexi(msg)) await reply(s.allSet);
+          if (!this.isFrictionFree(msg)) await reply(s.allSet);
           await this.promptForBookingEntry(ctx, msg, reply, replyWithButtons, connector);
         } catch (err: any) {
           if (this.isPersonNotFound(err)) {
@@ -848,27 +867,245 @@ export class FlowEngine {
       await this.handleStatus(ctx, msg, reply, replyWithButtons);
       return;
     }
-    if (this.isFlexi(msg)) {
-      await this.promptForFlexiLocation(ctx, msg, reply, connector);
+    if (this.isFrictionFree(msg)) {
+      // Both modes → let the rider choose; single mode → straight to pickup.
+      if (this.flexiOffered(msg) && this.regularOffered(msg)) {
+        await this.sendRideTypePrompt(ctx, msg, replyWithButtons);
+      } else {
+        ctx.rideType = this.regularOffered(msg) ? 'regular' : 'flexi';
+        await this.saveContext(msg, ctx);
+        await this.promptForPickup(ctx, msg, reply, connector);
+      }
       return;
     }
     await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
   }
 
+  /** When a merchant offers BOTH ride types, ask which one (after tapping Book).
+   *  The buttons are handled by the global `ride_type:*` handler. */
+  private async sendRideTypePrompt(
+    ctx: FlowContext, msg: CommandMessage,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+  ) {
+    const s = t(ctx.language);
+    ctx.rideType = undefined;
+    await this.saveContext(msg, ctx);
+    await replyWithButtons(s.rideTypePrompt, [[
+      { text: s.rideTypeFlexi, data: 'ride_type:flexi' },
+      { text: s.rideTypeRegular, data: 'ride_type:regular' },
+    ]]);
+  }
+
+  // =========================================================================
+  // Regular one-way auto flow (friction-free): pickup (shared, above) → drop →
+  // auto fare estimate → confirm → book ONE_WAY → poll driver → track. A clean,
+  // Flexi-style flow (NOT the classic origin/destination/multi-tier estimate one).
+  // =========================================================================
+
+  /** After pickup is confirmed, ask for the drop. Native "Send location" button
+   *  on WhatsApp; a typed address is also accepted. */
+  private async promptForRegularDrop(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    connector?: Connector,
+  ) {
+    const s = t(ctx.language);
+    ctx.state = 'AWAITING_REGULAR_DROP';
+    await this.saveContext(msg, ctx);
+    if (connector instanceof WhatsAppConnector) {
+      await connector.sendLocationRequest(this.getReplyTarget(msg, connector), s.regularDropPrompt, this.getMerchantConfig(msg));
+    } else {
+      await reply(s.regularDropPrompt);
+    }
+  }
+
+  /** Capture the drop — a shared pin (reverse-geocode) or a typed address (place
+   *  search → disambiguate) — then price the one-way auto. */
+  private async handleRegularDrop(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
+  ) {
+    const s = t(ctx.language);
+    if (!ctx.nyToken || !ctx.origin) {
+      await reply(s.sessionExpired); ctx.state = 'IDLE'; await this.saveContext(msg, ctx); return;
+    }
+    const client = new NammaYatriClient(ctx.nyToken);
+    const location = msg.metadata?.location as { latitude: number; longitude: number; name?: string; address?: string } | undefined;
+    if (input === '__location_pin__' && location) {
+      let dest: NYPlaceDetails;
+      try { dest = await client.reverseGeocode(location.latitude, location.longitude); }
+      catch { dest = { lat: location.latitude, lon: location.longitude, placeId: `${location.latitude},${location.longitude}`, address: {} }; }
+      if ((location.name || location.address) && !dest.address.area) dest.address = { ...dest.address, area: location.name || location.address };
+      ctx.destination = dest;
+      await this.startRegularSearch(ctx, msg, reply, replyWithButtons, connector);
+      return;
+    }
+    // Typed address → place search + disambiguation.
+    const places = await client.searchPlaces(input, this.searchCenterFor(ctx, 'destination')).catch(() => []);
+    if (!places.length) { await reply(s.noPlacesFound); return; }
+    ctx.destinationOptions = places.slice(0, 3).map((p) => ({ description: p.description, placeId: p.placeId }));
+    ctx.state = 'CONFIRMING_REGULAR_DROP';
+    await this.saveContext(msg, ctx);
+    await replyWithButtons(
+      s.regularSelectDrop,
+      ctx.destinationOptions.map((o) => [{ text: o.description.substring(0, 24), data: `regdrop:${o.placeId}` }]),
+    );
+  }
+
+  /** Rider picked one of the searched drop options (or typed a new address). */
+  private async handleConfirmingRegularDrop(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
+  ) {
+    const s = t(ctx.language);
+    if (input.startsWith('regdrop:')) {
+      if (!ctx.nyToken) { await reply(s.sessionExpired); return; }
+      const client = new NammaYatriClient(ctx.nyToken);
+      try { ctx.destination = await client.getPlaceDetails(input.slice('regdrop:'.length)); }
+      catch { await reply(s.somethingWentWrong); return; }
+      await this.startRegularSearch(ctx, msg, reply, replyWithButtons, connector);
+      return;
+    }
+    // A fresh typed address → re-run the drop search.
+    await this.handleRegularDrop(ctx, input, msg, reply, replyWithButtons, connector);
+  }
+
+  /** Price the one-way auto (searchRide ONE_WAY → estimates → pick auto), then
+   *  show the fare confirmation. */
+  private async startRegularSearch(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
+  ) {
+    const s = t(ctx.language);
+    if (!ctx.nyToken || !ctx.origin || !ctx.destination) {
+      await reply(s.sessionExpired); ctx.state = 'IDLE'; await this.saveContext(msg, ctx); return;
+    }
+    const client = new NammaYatriClient(ctx.nyToken);
+    ctx.state = 'REGULAR_SEARCHING';
+    await this.saveContext(msg, ctx);
+    await reply(s.regularSearching);
+    let estimates: NYEstimate[] = [];
+    try {
+      const searchId = await client.searchRide(ctx.origin, ctx.destination);
+      ctx.regularSearchId = searchId;
+      for (let i = 0; i < 6; i++) {
+        estimates = await client.getEstimates(searchId);
+        if (estimates.length) break;
+        await sleep(2000);
+      }
+    } catch (err: any) {
+      console.error(`[regular] search failed: ${err.message}`);
+      await this.flexiNoAuto(ctx, msg, replyWithButtons);
+      return;
+    }
+    if (!estimates.length) { await this.flexiNoAuto(ctx, msg, replyWithButtons); return; }
+    // One-way AUTO only — pick the auto tier (fall back to the first estimate).
+    const auto = estimates.find((e) => e.vehicleVariant === 'AUTO_RICKSHAW') ?? estimates[0];
+    ctx.regularEstimateId = auto.id;
+    ctx.regularFare = auto.estimatedFare ?? auto.totalFareRange?.minFare;
+    ctx.selectedServiceTier = auto.serviceTierName;
+    await this.saveContext(msg, ctx);
+    await this.sendRegularFareConfirm(ctx, msg, replyWithButtons);
+  }
+
+  /** Show the auto fare + [Book / Change drop]. */
+  private async sendRegularFareConfirm(
+    ctx: FlowContext, msg: CommandMessage,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+  ) {
+    const s = t(ctx.language);
+    ctx.state = 'CONFIRMING_REGULAR_FARE';
+    await this.saveContext(msg, ctx);
+    const area = ctx.destination?.address?.area || (ctx.destination ? formatAddress(ctx.destination) : '') || 'your destination';
+    await replyWithButtons(s.regularFareConfirm(ctx.regularFare ?? 0, area), [
+      [{ text: s.regularConfirmButton, data: 'regular_book' }],
+      [{ text: s.regularChangeDropButton, data: 'regular_change_drop' }],
+    ]);
+  }
+
+  /** Book the one-way auto: select the estimate, poll for a driver, show the card,
+   *  register with the tracker (Track + arrived/started/ended). */
+  private async confirmRegularBooking(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector: Connector,
+  ) {
+    const s = t(ctx.language);
+    if (!ctx.nyToken || !ctx.regularEstimateId) { await reply(s.sessionExpired); return; }
+    const client = new NammaYatriClient(ctx.nyToken);
+    ctx.cancelRequested = false;
+    await this.saveContext(msg, ctx);
+    await replyWithButtons(s.regularBooking, [[{ text: s.flexiCancelSearch, data: 'cancel' }]]);
+
+    // Reference time BEFORE select (minus skew) so the just-created booking clears
+    // the listV2 createdAfter filter.
+    const selectCalledAt = new Date(Date.now() - 120000);
+    try {
+      await client.selectEstimate(ctx.regularEstimateId);
+    } catch (err: any) {
+      console.error(`[regular] select failed: ${err.message}`);
+      await this.flexiNoAuto(ctx, msg, replyWithButtons);
+      return;
+    }
+    const afterSelect = await this.getContext(msg);
+    if (afterSelect.cancelRequested || afterSelect.state === 'IDLE') return;
+    afterSelect.state = 'TRACKING';
+    afterSelect.selectStartedAt = selectCalledAt.toISOString();
+    await this.saveContext(msg, afterSelect);
+
+    const POLL_ATTEMPTS = 90, POLL_INTERVAL = 2000, POLL_NOTIFY_EVERY = 15;
+    let foundBooking: any = null;
+    for (let i = 0; i < POLL_ATTEMPTS; i++) {
+      const freshCtx = await this.getContext(msg);
+      if (freshCtx.cancelRequested || freshCtx.state === 'IDLE') return;
+      try {
+        const bookings = await client.getActiveBookings(selectCalledAt);
+        if (bookings.length) {
+          foundBooking = bookings[0];
+          freshCtx.activeBookingId = foundBooking.id;
+          await this.saveContext(msg, freshCtx);
+          break;
+        }
+      } catch (err: any) { console.warn(`[regular] poll error (${i + 1}): ${err.message}`); }
+      if (i > 0 && i % POLL_NOTIFY_EVERY === 0) await reply(s.flexiStillFinding(Math.round(((i + 1) * POLL_INTERVAL) / 1000)));
+      await sleep(POLL_INTERVAL);
+    }
+
+    if (foundBooking) {
+      await this.registerRide(msg, connector, foundBooking.id, ctx, 'confirmed');
+      const hasDriver = !!(foundBooking.rideList?.[0]?.driverName || foundBooking.rideList?.[0]?.rideOtp || foundBooking.driverName);
+      if (hasDriver) {
+        await this.rideRegistry.claimStage(foundBooking.id, 'assigned');
+        await this.rideRegistry.update(foundBooking.id, { lastStage: 'assigned' });
+      }
+      await this.sendFlexiDriverCard(foundBooking, msg, reply, replyWithButtons);
+    } else {
+      await this.flexiNoAuto(ctx, msg, replyWithButtons);
+    }
+  }
+
   /** Ask the user to share their current location. On WhatsApp this uses the
    *  native "Send location" button; elsewhere it falls back to a text prompt. */
-  private async promptForFlexiLocation(
+  private async promptForPickup(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
     connector?: Connector,
     opts?: { suppressFare?: boolean },
   ) {
     const s = t(ctx.language);
-    ctx.state = 'AWAITING_FLEXI_LOCATION';
+    ctx.state = 'AWAITING_PICKUP';
     await this.saveContext(msg, ctx);
     // On a "Change location" re-prompt, suppress the fare line (already shown) so the
     // bubble is minimal — its native Send-location button is what opens the map.
-    const fare = opts?.suppressFare ? undefined : this.flexiFareLine(ctx, msg);
+    // The metered fare line is Flexi-only; Regular gets an upfront estimate later.
+    const fare = (opts?.suppressFare || ctx.rideType === 'regular') ? undefined : this.flexiFareLine(ctx, msg);
     const body = fare ? `${s.flexiSharePrompt}\n\n${fare}` : s.flexiSharePrompt;
     if (connector instanceof WhatsAppConnector) {
       const chatId = this.getReplyTarget(msg, connector);
@@ -880,7 +1117,7 @@ export class FlowEngine {
 
   /** Handle a shared location pin for a Flexi booking: auto-auth, search a
    *  metered (MeterRide) ride, confirm, poll for a driver, show the driver card. */
-  private async handleFlexiLocation(
+  private async handlePickup(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
@@ -890,7 +1127,7 @@ export class FlowEngine {
     const location = msg.metadata?.location as
       { latitude: number; longitude: number; name?: string; address?: string } | undefined;
     if (!location) {
-      await this.promptForFlexiLocation(ctx, msg, reply, connector);
+      await this.promptForPickup(ctx, msg, reply, connector);
       return;
     }
 
@@ -976,18 +1213,18 @@ export class FlowEngine {
     // Don't dispatch yet — confirm the pickup first (PDF screen 04). If the
     // user shared a NAMED/saved place, location.name is set (a live "current
     // location" share has none) → warn it may not be where they physically are.
-    await this.sendFlexiConfirm(ctx, msg, replyWithButtons, location.name);
+    await this.sendPickupConfirm(ctx, msg, replyWithButtons, location.name);
   }
 
   /** Show the pickup confirmation (address + Confirm/Change buttons). When the
    *  shared location was a named/saved place, warn it may not be the live spot. */
-  private async sendFlexiConfirm(
+  private async sendPickupConfirm(
     ctx: FlowContext, msg: CommandMessage,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
     namedPlace?: string,
   ) {
     const s = t(ctx.language);
-    ctx.state = 'CONFIRMING_FLEXI_LOCATION';
+    ctx.state = 'CONFIRMING_PICKUP';
     await this.saveContext(msg, ctx);
     const label = namedPlace
       || ctx.origin?.address?.area
@@ -995,8 +1232,8 @@ export class FlowEngine {
       || 'your shared location';
     const body = namedPlace ? s.flexiConfirmSavedPlace(namedPlace) : s.flexiConfirmPickup(label);
     await replyWithButtons(body, [
-      [{ text: s.flexiConfirmButton, data: 'flexi_confirm' }],
-      [{ text: s.flexiAdjustButton, data: 'flexi_adjust' }],
+      [{ text: s.pickupConfirmButton, data: 'pickup_confirm' }],
+      [{ text: s.pickupAdjustButton, data: 'pickup_adjust' }],
     ]);
   }
 
@@ -1010,7 +1247,7 @@ export class FlowEngine {
   ) {
     const s = t(ctx.language);
     if (!ctx.nyToken || !ctx.origin) {
-      await this.promptForFlexiLocation(ctx, msg, reply);
+      await this.promptForPickup(ctx, msg, reply);
       return;
     }
     const client = new NammaYatriClient(ctx.nyToken);
@@ -1079,19 +1316,7 @@ export class FlowEngine {
     // re-reads the registry and keeps watching — sending the driver card itself
     // if this in-handler poll was killed before it could.
     if (bookingId) {
-      const entry: ActiveRide = {
-        bookingId,
-        source: msg.source,
-        userKey: this.scopedUserKey(msg),
-        sessionUserId: this.scopedSessionUserId(msg),
-        chatId: this.getReplyTarget(msg, connector),
-        phoneNumberId: (msg.metadata?.phoneNumberId as string) || undefined,
-        merchantId: msg.merchantId,
-        language: afterConfirm.language,
-        lastStage: 'confirmed',
-        createdAt: new Date().toISOString(),
-      };
-      await this.rideRegistry.register(entry);
+      await this.registerRide(msg, connector, bookingId, afterConfirm, 'confirmed');
     }
 
     // Poll for driver assignment (same cadence as the estimate flow).
@@ -1823,6 +2048,8 @@ export class FlowEngine {
     }
 
     if (foundBooking) {
+      // Classic (non-friction-free) estimate flow only — friction-free Regular uses
+      // the dedicated one-way flow (startRegularSearch/confirmRegularBooking).
       await this.sendBookingConfirmation(foundBooking, selected.serviceTierName, msg, reply, replyWithButtons);
       return;
     }
@@ -1964,17 +2191,14 @@ export class FlowEngine {
     const s = t(ctx.language);
     const client = new NammaYatriClient(ctx.nyToken!);
 
-    const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-    const createdAfter = ctx.selectStartedAt
-      ? new Date(ctx.selectStartedAt)
-      : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
+    const createdAfter = this.getCreatedAfterDate(ctx);
 
     let b: any;
-    if (this.isFlexi(msg)) {
+    if (this.isFrictionFree(msg)) {
       // Flexi: read the KNOWN booking via getBookingDetails (handles INPROGRESS,
       // which getActiveBookings drops) sourced from the durable registry, so
       // tracking works mid-ride.
-      b = await this.resolveFlexiActiveBooking(msg, client);
+      b = await this.resolveActiveBooking(msg, client);
     } else {
       const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
       b = bookings[0];
@@ -2023,16 +2247,13 @@ export class FlowEngine {
     const s = t(ctx.language);
     const client = new NammaYatriClient(ctx.nyToken!);
 
-    const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-    const createdAfter = ctx.selectStartedAt
-      ? new Date(ctx.selectStartedAt)
-      : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
+    const createdAfter = this.getCreatedAfterDate(ctx);
 
     let b: any;
-    if (this.isFlexi(msg)) {
+    if (this.isFrictionFree(msg)) {
       // Flexi: getBookingDetails on the registry-known booking (survives INPROGRESS,
       // which getActiveBookings excludes). bookingId is the rider's own → no IDOR.
-      b = await this.resolveFlexiActiveBooking(msg, client);
+      b = await this.resolveActiveBooking(msg, client);
     } else {
       const allBookings = await client.getActiveBookings(createdAfter);
       const bookings = allBookings.sort((a: any, b2: any) =>
@@ -2101,10 +2322,7 @@ export class FlowEngine {
         ctx.cancelRequested = true;
         await this.saveContext(msg, ctx);
 
-        const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-        const createdAfter = ctx.selectStartedAt
-          ? new Date(ctx.selectStartedAt)
-          : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
+        const createdAfter = this.getCreatedAfterDate(ctx);
 
         const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
         const booking = explicitBookingId
@@ -2177,15 +2395,7 @@ export class FlowEngine {
   ) {
     const ctx = await this.getContext(msg);
     const s = t(ctx.language);
-    // Flexi is button-only and self-contained — never offer the (non-flexi)
-    // Track Ride path, which would drop the rider out of the flexi surface.
-    const buttons = this.isFlexi(msg)
-      ? await this.flexiMenuRow(msg, s)
-      : [[
-          { text: s.bookARide, data: 'book' },
-          { text: s.trackRide, data: 'status' },
-        ]];
-    await replyWithButtons(`${prefix}${s.whatToDo}`, buttons);
+    await replyWithButtons(`${prefix}${s.whatToDo}`, await this.menuRow(msg, s));
   }
 
   private async resetContext(msg: CommandMessage): Promise<void> {
@@ -2427,9 +2637,42 @@ export class FlowEngine {
     return msg.metadata?.merchantConfig as MerchantConfig | undefined;
   }
 
-  /** Whether the Flexi (location-only metered) flow is enabled for this merchant. */
-  private isFlexi(msg: CommandMessage): boolean {
+  /** Whether the merchant offers any WhatsApp-native ride (Flexi and/or Regular).
+   *  The friction-free UX (welcome/menu/intro/silent-auth/tracking) applies to both. */
+  private isFrictionFree(msg: CommandMessage): boolean {
+    const m = this.getMerchantConfig(msg);
+    return !!m && (m.flexiEnabled || m.regularEnabled);
+  }
+
+  /** Merchant offers metered Flexi rides. */
+  private flexiOffered(msg: CommandMessage): boolean {
     return this.getMerchantConfig(msg)?.flexiEnabled === true;
+  }
+
+  /** Merchant offers destination Regular rides. */
+  private regularOffered(msg: CommandMessage): boolean {
+    return this.getMerchantConfig(msg)?.regularEnabled === true;
+  }
+
+  /** Register a booking with the durable ride tracker (Flexi + friction-free
+   *  Regular) so the Track button + progress pushes work uniformly. */
+  private async registerRide(
+    msg: CommandMessage, connector: Connector, bookingId: string,
+    ctx: FlowContext, lastStage: ActiveRide['lastStage'] = 'confirmed',
+  ): Promise<void> {
+    const entry: ActiveRide = {
+      bookingId,
+      source: msg.source,
+      userKey: this.scopedUserKey(msg),
+      sessionUserId: this.scopedSessionUserId(msg),
+      chatId: this.getReplyTarget(msg, connector),
+      phoneNumberId: (msg.metadata?.phoneNumberId as string) || undefined,
+      merchantId: msg.merchantId,
+      language: ctx.language,
+      lastStage,
+      createdAt: new Date().toISOString(),
+    };
+    await this.rideRegistry.register(entry);
   }
 
   /** True if this rider has a ride the tracker is still watching (durable — no NY
@@ -2443,14 +2686,29 @@ export class FlowEngine {
     }
   }
 
-  /** The Flexi greeting/menu button row: [Track?] Book More — Track only when a
-   *  ride is live. Kept to <=3 buttons, no descriptions (stays reply-buttons). */
-  private async flexiMenuRow(msg: CommandMessage, s: ReturnType<typeof t>): Promise<{ text: string; data: string }[][]> {
-    const row: { text: string; data: string }[] = [];
-    if (await this.hasActiveRide(msg)) row.push({ text: s.trackRide, data: 'status' });
-    row.push({ text: s.bookARide, data: 'book' });
-    row.push({ text: s.flexiMore, data: 'more' });
+  /** The context-aware menu button row. Friction-free merchants: [Track?] Book More
+   *  (Track only when a ride is live). Classic merchants: Book Track [Language?].
+   *  Kept to <=3 buttons, no descriptions (stays reply-buttons). */
+  private async menuRow(msg: CommandMessage, s: ReturnType<typeof t>, opts?: { includeLanguage?: boolean }): Promise<{ text: string; data: string }[][]> {
+    if (this.isFrictionFree(msg)) {
+      const row: { text: string; data: string }[] = [];
+      if (await this.hasActiveRide(msg)) row.push({ text: s.trackRide, data: 'status' });
+      row.push({ text: s.bookARide, data: 'book' });
+      row.push({ text: s.moreButton, data: 'more' });
+      return [row];
+    }
+    const row: { text: string; data: string }[] = [
+      { text: s.bookARide, data: 'book' },
+      { text: s.trackRide, data: 'status' },
+    ];
+    if (opts?.includeLanguage) row.push({ text: s.chooseLanguage, data: 'choose_language' });
     return [row];
+  }
+
+  /** Reference time for filtering listV2 to the current booking (24h fallback). */
+  private getCreatedAfterDate(ctx: FlowContext): Date {
+    const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+    return ctx.selectStartedAt ? new Date(ctx.selectStartedAt) : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
   }
 
   /** Sends the how-it-works intro: the configured video (if any) + the text steps.
@@ -2465,15 +2723,15 @@ export class FlowEngine {
     const videoUrl = merchant?.flexiIntroVideoUrl ?? config.flexiIntroVideoUrl;
     if (videoUrl && connector instanceof WhatsAppConnector) {
       const chatId = this.getReplyTarget(msg, connector);
-      await connector.sendVideo(chatId, videoUrl, s.flexiHowItWorksCaption, merchant);
+      await connector.sendVideo(chatId, videoUrl, s.howItWorksCaption, merchant);
     }
-    await reply(s.flexiHowItWorksText);
+    await reply(s.howItWorksText);
   }
 
   /** Resolve the rider's live booking for the Flexi Track flow via the durable
    *  registry (their OWN bookingId) + getBookingDetails. Returns null when there
    *  is no active ride or the registry entry is stale (already ended/cancelled). */
-  private async resolveFlexiActiveBooking(msg: CommandMessage, client: NammaYatriClient): Promise<any | null> {
+  private async resolveActiveBooking(msg: CommandMessage, client: NammaYatriClient): Promise<any | null> {
     const rides = await this.rideRegistry.listByUser(this.scopedUserKey(msg)).catch(() => []);
     // Newest first — a rider could (rarely) hold more than one registry entry.
     rides.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());

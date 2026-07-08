@@ -150,13 +150,13 @@ export interface LanguageStrings {
   markSafeFailed: (err: string) => string;
 
   // Flexi (location-only metered booking)
-  flexiWelcome: string;
+  welcome: string;
   flexiSharePrompt: string;
   flexiFareRate: (base: number, perKm: number) => string;
   flexiConfirmPickup: (address: string) => string;
   flexiConfirmSavedPlace: (name: string) => string;
-  flexiConfirmButton: string;
-  flexiAdjustButton: string;
+  pickupConfirmButton: string;
+  pickupAdjustButton: string;
   flexiFinding: string;
   flexiStillFinding: (elapsed: number) => string;
   flexiCancelSearch: string;
@@ -183,13 +183,26 @@ export interface LanguageStrings {
   flexiEndOtpFetchError: string;
   flexiRideAlreadyEnded: string;
   // Flexi "hi" menu — More drawer + how-it-works + support
-  flexiMore: string;
-  flexiMoreTitle: string;
-  flexiHowItWorks: string;
-  flexiContactSupport: string;
-  flexiHowItWorksText: string;
-  flexiHowItWorksCaption: string;
-  flexiSupportMessage: (phone: string) => string;
+  moreButton: string;
+  moreTitle: string;
+  howItWorks: string;
+  contactSupport: string;
+  howItWorksText: string;
+  howItWorksCaption: string;
+  supportMessage: (phone: string) => string;
+  // Ride-type chooser (merchant offers both Flexi + Regular) + generic ride-started
+  rideTypePrompt: string;
+  rideTypeFlexi: string;
+  rideTypeRegular: string;
+  rideStartedSimple: string;
+  // Regular one-way flow (pickup + drop → auto fare → book)
+  regularDropPrompt: string;
+  regularSelectDrop: string;
+  regularFareConfirm: (fare: number, area: string) => string;
+  regularConfirmButton: string;
+  regularChangeDropButton: string;
+  regularSearching: string;
+  regularBooking: string;
 
   // Errors
   somethingWentWrong: string;

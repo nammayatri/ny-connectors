@@ -98,9 +98,14 @@ export function buildArrived(booking: any, language?: SupportedLanguage): BuiltM
  *  can reveal the end OTP (rentals) when they reach their destination. */
 export function buildStarted(booking: any, language?: SupportedLanguage): BuiltMessage {
   const s = t(language);
+  // The End-ride OTP button is rental-only: NY generates an end OTP at start for
+  // rentals (Flexi), not for ONE_WAY Regular rides. Gate on its presence.
+  const hasEndOtp = !!booking?.rideList?.[0]?.endOtp;
   return {
-    text: s.flexiRideStarted,
-    buttons: [[{ text: s.flexiEndRideButton, data: `flexi_end_otp:${booking?.id}` }]],
+    // Rentals (with end OTP) get the End-ride prompt; ONE_WAY Regular rides get a
+    // generic started message and no button.
+    text: hasEndOtp ? s.flexiRideStarted : s.rideStartedSimple,
+    buttons: hasEndOtp ? [[{ text: s.flexiEndRideButton, data: `flexi_end_otp:${booking?.id}` }]] : undefined,
   };
 }
 

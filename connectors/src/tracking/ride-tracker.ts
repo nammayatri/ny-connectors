@@ -170,18 +170,20 @@ export class RideTracker {
     return this.whatsapp.sendMessage(entry.chatId, msg.text, merchant);
   }
 
-  // On a terminal ride, clear the rider's flexi session so they can book again
-  // cleanly — but only if it still points at THIS booking (never clobber a new
-  // booking the rider may have already started).
+  // On a terminal ride, clear the rider's session so they can book again cleanly —
+  // but only if it still points at THIS booking (never clobber a new booking the
+  // rider may have already started). Matches BOTH flexiBookingId (Flexi) and
+  // activeBookingId (Regular), so either ride type gets a proactive reset.
   private async resetSession(entry: ActiveRide): Promise<void> {
     const session = await this.sessionManager.getSession(entry.source, entry.sessionUserId);
     const meta = session?.metadata as FlowContext | undefined;
-    if (meta && meta.flexiBookingId === entry.bookingId) {
+    if (meta && (meta.flexiBookingId === entry.bookingId || meta.activeBookingId === entry.bookingId)) {
       meta.state = 'IDLE';
       meta.flexiBookingId = undefined;
       meta.flexiSearchId = undefined;
       meta.flexiQuoteId = undefined;
       meta.activeBookingId = undefined;
+      meta.rideType = undefined;
       meta.cancelRequested = false;
       await this.sessionManager.updateContext(entry.source, entry.sessionUserId, meta);
     }

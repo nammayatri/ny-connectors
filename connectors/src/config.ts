@@ -1,4 +1,5 @@
 export type RedisMode = 'standalone' | 'cluster';
+export type RideMode = 'flexi' | 'regular' | 'both';
 
 // Per-merchant configuration. Each merchant has its own WhatsApp number,
 // Namma Yatri credentials, and dashboard settings.
@@ -14,7 +15,9 @@ export interface MerchantConfig {
   nyDashboardMerchant: string;
   nyCity: string;
   nyTrackingUrl: string; // template with {rideId} placeholder
-  flexiEnabled: boolean;  // gate the location-only "Flexi" booking flow (Tumkur)
+  rideMode?: RideMode;     // which ride types this merchant offers (undefined = classic)
+  flexiEnabled: boolean;   // derived from rideMode: offers metered Flexi rides
+  regularEnabled: boolean; // derived from rideMode: offers destination Regular rides
   flexiBaseFare?: number; // display-only metered tariff, ₹ base (shown to riders)
   flexiPerKm?: number;    // display-only metered tariff, ₹ per km
   flexiServiceArea?: string;      // served-city name for the geofence (e.g. "Tumkur")
@@ -50,7 +53,9 @@ export interface Config {
   nyCity: string;
   nyMock: boolean;
   nyLogBodies: boolean;           // log full NY request/response bodies (PII) — disable in prod
+  rideMode?: RideMode;
   flexiEnabled: boolean;
+  regularEnabled: boolean;
   flexiBaseFare?: number;
   flexiPerKm?: number;
   flexiServiceArea?: string;
@@ -85,6 +90,16 @@ function resolveRedisMode(raw: string, clusterNodesProvided: boolean): RedisMode
   if (value === 'cluster' || value === 'standalone') return value;
   return clusterNodesProvided ? 'cluster' : 'standalone';
 }
+
+// Which ride types a merchant offers. Explicit RIDE_MODE wins; else fall back to
+// the legacy FLEXI_ENABLED flag (truthy → 'flexi'). undefined = a classic
+// (non-friction-free) merchant that offers neither Flexi nor Regular.
+export function resolveRideMode(rideModeEnv?: string, flexiEnabledEnv?: string): RideMode | undefined {
+  const m = (rideModeEnv || '').trim().toLowerCase();
+  if (m === 'flexi' || m === 'regular' || m === 'both') return m;
+  return /^(1|true|yes)$/i.test(flexiEnabledEnv || '') ? 'flexi' : undefined;
+}
+const GLOBAL_RIDE_MODE = resolveRideMode(process.env.RIDE_MODE, process.env.FLEXI_ENABLED);
 
 export const config: Config = {
   port: parseInt(process.env.PORT || '3000', 10),
@@ -124,7 +139,9 @@ export const config: Config = {
   nyLogBodies: /^(1|true|yes)$/i.test(process.env.NY_LOG_BODIES || 'true'),
   // Rollout flag for the location-only Flexi flow. Global default for the legacy
   // single merchant; override per-merchant via MERCHANT_{ID}_FLEXI_ENABLED.
-  flexiEnabled: /^(1|true|yes)$/i.test(process.env.FLEXI_ENABLED || ''),
+  rideMode: GLOBAL_RIDE_MODE,
+  flexiEnabled: GLOBAL_RIDE_MODE === 'flexi' || GLOBAL_RIDE_MODE === 'both',
+  regularEnabled: GLOBAL_RIDE_MODE === 'regular' || GLOBAL_RIDE_MODE === 'both',
   // Display-only metered tariff for the Flexi fare line (never used to compute a fare).
   flexiBaseFare: process.env.FLEXI_BASE_FARE ? parseFloat(process.env.FLEXI_BASE_FARE) : undefined,
   flexiPerKm: process.env.FLEXI_PER_KM ? parseFloat(process.env.FLEXI_PER_KM) : undefined,
@@ -173,6 +190,11 @@ function loadMerchants(): void {
 
   for (const id of ids) {
     const p = `MERCHANT_${id}_`;
+    // Explicit per-merchant RIDE_MODE / legacy FLEXI_ENABLED. Only inherit the
+    // global mode when the merchant sets NEITHER, so an explicit
+    // MERCHANT_x_FLEXI_ENABLED=false still forces classic (exact back-compat).
+    const rmOverride = process.env[`${p}RIDE_MODE`] !== undefined || process.env[`${p}FLEXI_ENABLED`] !== undefined;
+    const rm = rmOverride ? resolveRideMode(process.env[`${p}RIDE_MODE`], process.env[`${p}FLEXI_ENABLED`]) : config.rideMode;
     const cfg: MerchantConfig = {
       id,
       whatsappPhoneNumberId: process.env[`${p}WHATSAPP_PHONE_NUMBER_ID`] || '',
@@ -185,7 +207,9 @@ function loadMerchants(): void {
       nyDashboardMerchant: process.env[`${p}NY_DASHBOARD_MERCHANT`] || '',
       nyCity: process.env[`${p}NY_CITY`] || '',
       nyTrackingUrl: process.env[`${p}NY_TRACKING_URL`] || 'https://www.nammayatri.in/u?vp=shareRide&rideId={rideId}',
-      flexiEnabled: /^(1|true|yes)$/i.test(process.env[`${p}FLEXI_ENABLED`] || String(config.flexiEnabled)),
+      rideMode: rm,
+      flexiEnabled: rm === 'flexi' || rm === 'both',
+      regularEnabled: rm === 'regular' || rm === 'both',
       flexiBaseFare: process.env[`${p}FLEXI_BASE_FARE`] ? parseFloat(process.env[`${p}FLEXI_BASE_FARE`] as string) : config.flexiBaseFare,
       flexiPerKm: process.env[`${p}FLEXI_PER_KM`] ? parseFloat(process.env[`${p}FLEXI_PER_KM`] as string) : config.flexiPerKm,
       flexiServiceArea: process.env[`${p}FLEXI_SERVICE_AREA`] || config.flexiServiceArea,
@@ -213,7 +237,9 @@ function loadMerchants(): void {
       nyDashboardMerchant: config.nyDashboardMerchant,
       nyCity: config.nyCity,
       nyTrackingUrl: 'https://www.nammayatri.in/u?vp=shareRide&rideId={rideId}',
+      rideMode: config.rideMode,
       flexiEnabled: config.flexiEnabled,
+      regularEnabled: config.regularEnabled,
       flexiBaseFare: config.flexiBaseFare,
       flexiPerKm: config.flexiPerKm,
       flexiServiceArea: config.flexiServiceArea,
