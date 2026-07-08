@@ -189,7 +189,7 @@ export const hi: LanguageStrings = {
   flexiRideAlreadyEnded: '✅ यह राइड पहले ही समाप्त हो चुकी है।',
 
   // Flexi "hi" मेनू — More ड्रॉअर + यह कैसे काम करता है + सहायता
-  moreButton: '⚙️ और',
+  moreButton: '⚙️ और विकल्प',
   moreTitle: 'आप क्या करना चाहेंगे?',
   howItWorks: '❓ यह कैसे काम करता है',
   contactSupport: '💬 सहायता',
@@ -199,8 +199,8 @@ export const hi: LanguageStrings = {
 
   // राइड-टाइप चुनाव + सामान्य राइड-शुरू
   rideTypePrompt: 'आप कैसे यात्रा करना चाहेंगे?',
-  rideTypeFlexi: '🛺 फ्लेक्सी',
-  rideTypeRegular: '🚗 रेगुलर',
+  rideTypeFlexi: '🛺 झटपट राइड',
+  rideTypeRegular: '🚗 मंज़िल वाली राइड',
   rideStartedSimple: '🚦 आपकी राइड शुरू हो गई है। सफर का आनंद लें!',
 
   // सामान्य वन-वे फ्लो (पिकअप + ड्रॉप → ऑटो किराया → बुक)

@@ -187,7 +187,7 @@ export const ta: LanguageStrings = {
   flexiRideAlreadyEnded: '✅ இந்த சவாரி ஏற்கனவே முடிந்துவிட்டது.',
 
   // Flexi "hi" மெனு — More டிராயர் + இது எப்படி வேலை செய்கிறது + ஆதரவு
-  moreButton: '⚙️ மேலும்',
+  moreButton: '⚙️ மேலும் விருப்பங்கள்',
   moreTitle: 'நீங்கள் என்ன செய்ய விரும்புகிறீர்கள்?',
   howItWorks: '❓ எப்படி வேலை செய்கிறது',
   contactSupport: '💬 ஆதரவு',
@@ -197,8 +197,8 @@ export const ta: LanguageStrings = {
 
   // சவாரி வகை தேர்வு + பொது சவாரி-தொடக்கம்
   rideTypePrompt: 'நீங்கள் எப்படி பயணிக்க விரும்புகிறீர்கள்?',
-  rideTypeFlexi: '🛺 ஃப்ளெக்ஸி',
-  rideTypeRegular: '🚗 ரெகுலர்',
+  rideTypeFlexi: '🛺 விரைவு சவாரி',
+  rideTypeRegular: '🚗 சேருமிட சவாரி',
   rideStartedSimple: '🚦 உங்கள் சவாரி தொடங்கியது. பயணத்தை ரசியுங்கள்!',
 
   // சாதாரண ஒரு வழி ஃப்ளோ (பிக்அப் + டிராப் → ஆட்டோ கட்டணம் → புக்)

@@ -187,7 +187,7 @@ export const te: LanguageStrings = {
   flexiRideAlreadyEnded: '✅ ఈ రైడ్ ఇప్పటికే ముగిసింది.',
 
   // Flexi "hi" మెను — More డ్రాయర్ + ఇది ఎలా పనిచేస్తుంది + మద్దతు
-  moreButton: '⚙️ మరిన్ని',
+  moreButton: '⚙️ మరిన్ని ఎంపికలు',
   moreTitle: 'మీరు ఏమి చేయాలనుకుంటున్నారు?',
   howItWorks: '❓ ఇది ఎలా పనిచేస్తుంది',
   contactSupport: '💬 మద్దతు',
@@ -197,8 +197,8 @@ export const te: LanguageStrings = {
 
   // రైడ్-రకం ఎంపిక + సాధారణ రైడ్-ప్రారంభం
   rideTypePrompt: 'మీరు ఎలా ప్రయాణించాలనుకుంటున్నారు?',
-  rideTypeFlexi: '🛺 ఫ్లెక్సీ',
-  rideTypeRegular: '🚗 రెగ్యులర్',
+  rideTypeFlexi: '🛺 త్వరిత రైడ్',
+  rideTypeRegular: '🚗 గమ్యం రైడ్',
   rideStartedSimple: '🚦 మీ రైడ్ ప్రారంభమైంది. ప్రయాణాన్ని ఆస్వాదించండి!',
 
   // సాధారణ వన్-వే ఫ్లో (పికప్ + డ్రాప్ → ఆటో ఛార్జీ → బుక్)

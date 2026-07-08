@@ -187,7 +187,7 @@ export const gu: LanguageStrings = {
   flexiRideAlreadyEnded: '✅ આ રાઈડ પહેલેથી સમાપ્ત થઈ ગઈ છે.',
 
   // Flexi "hi" મેનૂ — More ડ્રોઅર + કેવી રીતે કામ કરે છે + સહાય
-  moreButton: '⚙️ વધુ',
+  moreButton: '⚙️ વધુ વિકલ્પો',
   moreTitle: 'તમે શું કરવા માગો છો?',
   howItWorks: '❓ કેવી રીતે કામ કરે',
   contactSupport: '💬 સહાય',
@@ -197,8 +197,8 @@ export const gu: LanguageStrings = {
 
   // રાઈડ-પ્રકાર પસંદગી + સામાન્ય રાઈડ-શરૂ
   rideTypePrompt: 'તમે કેવી રીતે મુસાફરી કરવા માગો છો?',
-  rideTypeFlexi: '🛺 ફ્લેક્સી',
-  rideTypeRegular: '🚗 રેગ્યુલર',
+  rideTypeFlexi: '🛺 ઝડપી રાઈડ',
+  rideTypeRegular: '🚗 ગંતવ્ય રાઈડ',
   rideStartedSimple: '🚦 તમારી રાઈડ શરૂ થઈ ગઈ છે. મુસાફરીનો આનંદ માણો!',
 
   // સામાન્ય વન-વે ફ્લો (પિકઅપ + ડ્રોપ → ઓટો ભાડું → બુક)

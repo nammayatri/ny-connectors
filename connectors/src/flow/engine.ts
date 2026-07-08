@@ -11,11 +11,19 @@ import { TelegramConnector } from '../connectors/telegram';
 import { WhatsAppConnector } from '../connectors/whatsapp';
 import { SlackConnector } from '../connectors/slack';
 import { config, MerchantConfig } from '../config';
-import { t, getAllLanguages, isValidLanguage, SupportedLanguage } from '../i18n';
+import { t, getAllLanguages, isValidLanguage, detectLanguage, SupportedLanguage } from '../i18n';
 
 type AnySessionManager = SessionManager | MemorySessionManager;
 
 const BOOK_TRIGGERS = ['book', 'ride', 'cab', 'auto', 'book a ride', 'book ride'];
+
+// Maps our 2-letter i18n code to Namma Yatri's profile Language enum. The NY
+// /profile API decodes `language` as the uppercase constructor name (ENGLISH,
+// KANNADA, …) — a lowercase ISO code like "kn" fails to parse (400), so the
+// account-side language preference must be sent in this form.
+const NY_LANGUAGE: Record<SupportedLanguage, string> = {
+  en: 'ENGLISH', hi: 'HINDI', kn: 'KANNADA', ta: 'TAMIL', te: 'TELUGU', gu: 'GUJARATI',
+};
 const CANCEL_TRIGGERS = ['cancel', 'stop', 'exit', 'quit', 'reset'];
 const STATUS_TRIGGERS = ['status', 'track', 'where is my ride'];
 
@@ -105,6 +113,20 @@ export class FlowEngine {
     if (!ctx.language) {
       const storedLang = await this.tokenStore.getLanguage(userKey);
       if (storedLang) ctx.language = storedLang;
+    }
+    // First-contact language detection: if the rider has no stored language yet,
+    // guess it from the script of their first message (Kannada text → kn, etc.).
+    // Runs once (only when unset), so it never fights a later explicit lang: choice.
+    // Latin/romanized text → undefined → stays on the default (English). The
+    // detected language is carried into the token record when auth/registration
+    // creates it (tokenStore.updateLanguage is a no-op until then).
+    if (!ctx.language) {
+      const detected = detectLanguage(input);
+      if (detected) {
+        ctx.language = detected;
+        await this.saveContext(message, ctx);
+        await this.tokenStore.updateLanguage(userKey, detected);
+      }
     }
     const s = t(ctx.language);
 
@@ -292,10 +314,18 @@ export class FlowEngine {
       // FLEXI: confirm/adjust the shared pickup (screen 04). Top-level so they
       // work regardless of the resumed state after a session hydrate.
       // Ride-type chooser (shown when a merchant offers both Flexi and Regular).
-      if (input.startsWith('ride_type:') && ctx.nyToken) {
+      if (input.startsWith('ride_type:')) {
         const rt = input.slice('ride_type:'.length);
         if (rt === 'flexi' || rt === 'regular') {
           ctx.rideType = rt;
+          ctx.pendingAction = 'book';   // resume into pickup after any OTP registration
+          await this.saveContext(message, ctx);
+          // Existing rider → silent auth; new rider → one-time OTP (which resumes
+          // this booking after verify). Fixes the old ctx.nyToken guard that
+          // silently dropped the tap for a not-yet-authed user.
+          const auth = await this.ensureAuth(ctx, message, reply, replyWithButtons, connector);
+          if (auth !== 'ok') return;
+          ctx.pendingAction = undefined;
           await this.saveContext(message, ctx);
           await this.promptForPickup(ctx, message, reply, connector);
         }
@@ -369,13 +399,19 @@ export class FlowEngine {
         return;
       }
 
-      // FLEXI: the "More" drawer (Language / How it works / Support) and its items.
+      // "More options": a submenu (a second message). Holds the *other* ride type
+      // ("Ride with destination" = Regular) plus How it works + Support. The extra
+      // "Main menu" row also nudges WhatsApp into a list layout, so the longer
+      // "Ride with destination" label isn't truncated. Voice etc. slot in here later.
       if (this.isFrictionFree(message) && input === 'more') {
-        await replyWithButtons(s.moreTitle, [[
-          { text: s.chooseLanguage, data: 'choose_language' },
-          { text: s.howItWorks, data: 'help' },
-          { text: s.contactSupport, data: 'support' },
-        ]]);
+        const items: { text: string; data: string }[] = [];
+        if (this.flexiOffered(message) && this.regularOffered(message)) {
+          items.push({ text: s.rideTypeRegular, data: 'ride_type:regular' });
+        }
+        items.push({ text: s.howItWorks, data: 'help' });
+        items.push({ text: s.contactSupport, data: 'support' });
+        items.push({ text: s.mainMenu, data: 'main_menu' });
+        await replyWithButtons(s.moreTitle, [items]);
         return;
       }
       if (this.isFrictionFree(message) && input === 'help') {
@@ -525,7 +561,7 @@ export class FlowEngine {
           await this.handleConfirmingAddLocation(ctx, input, message, reply, replyWithButtons);
           break;
         case 'AWAITING_OTP':
-          await this.handleAwaitingOtp(ctx, input, message, reply, replyWithButtons);
+          await this.handleAwaitingOtp(ctx, input, message, reply, replyWithButtons, connector);
           break;
         case 'AWAITING_NAME':
           await this.handleAwaitingName(ctx, input, message, reply, replyWithButtons);
@@ -565,17 +601,9 @@ export class FlowEngine {
         return;
       }
       if (this.isFrictionFree(msg)) {
-        const introKey = this.scopedUserKey(msg);
-        // First-ever contact: send the how-it-works intro once, unprompted.
-        // Fail-open: a store blip must never block the greeting menu below.
-        try {
-          if (!(await this.tokenStore.hasSeenIntro(introKey))) {
-            await this.sendHowItWorks(msg, connector, reply, s);
-            await this.tokenStore.markIntroSent(introKey);
-          }
-        } catch (err: any) {
-          console.warn(`[flexi] intro check/send failed: ${err?.message || err}`);
-        }
+        // First-ever contact: send the intro video once, unprompted (deduped by
+        // hasSeenIntro, so a user who registers first won't see it twice).
+        await this.sendOnboardingIntroOnce(msg, connector, s);
         await replyWithButtons(s.welcome, await this.menuRow(msg, s));
       } else {
         await replyWithButtons(s.welcomeMessage, await this.menuRow(msg, s, { includeLanguage: true }));
@@ -584,61 +612,21 @@ export class FlowEngine {
     }
 
     if (!ctx.nyToken) {
-      // Check persistent token store
-      const userKey = this.scopedUserKey(msg);
-      const merchant = this.getMerchantConfig(msg);
-      const stored = await this.tokenStore.get(userKey);
-      if (stored) {
-        ctx.nyToken = stored.nyToken;
-        ctx.savedLocations = stored.savedLocations;
-        const client = new NammaYatriClient(ctx.nyToken);
-        try {
-          ctx.savedLocations = await client.getSavedLocations();
-          await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
-        } catch {}
-        await this.promptForBookingEntry(ctx, msg, reply, replyWithButtons, connector);
-        return;
-      }
-
-      // Auto-extract phone number from channel when possible
-      const autoPhone = this.extractPhoneFromChannel(msg);
-      if (autoPhone) {
-        ctx.phone = autoPhone;
-        try {
-          const { token, personId: authPersonId } = await NammaYatriClient.authenticate(autoPhone, merchant);
-          ctx.nyToken = token;
-
-          const client = new NammaYatriClient(token);
-          try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
-
-          let personId = authPersonId;
-          if (!personId) {
-            personId = await client.getPersonId().catch(() => '');
-          }
-          ctx.personId = personId;
-          console.log(`[flow] Auto-auth via ${msg.source} phone=${autoPhone} personId=${personId} merchant=${msg.merchantId || 'default'}`);
-
-          await this.tokenStore.set(userKey, {
-            nyToken: token,
-            personId,
-            phone: autoPhone,
-            savedLocations: ctx.savedLocations,
-            authenticatedAt: new Date().toISOString(),
-            language: ctx.language,
-          });
-
-          // Flexi jumps straight to the location prompt — skip the extra "all set" bubble.
-          if (!this.isFrictionFree(msg)) await reply(s.allSet);
-          await this.promptForBookingEntry(ctx, msg, reply, replyWithButtons, connector);
-        } catch (err: any) {
-          if (this.isPersonNotFound(err)) {
-            await this.startRegistration(ctx, autoPhone, msg, reply, replyWithButtons);
-          } else {
-            await reply(s.setupFailed(err.message));
-            ctx.state = 'IDLE';
-            await this.saveContext(msg, ctx);
-          }
+      // WhatsApp (or any channel with a derivable phone): unified silent auth /
+      // one-time OTP onboarding. ensureAuth returns 'registering' when it has sent
+      // an OTP to a new user — the booking then resumes after verifyOtp.
+      if (this.extractPhoneFromChannel(msg)) {
+        if (ctx.pendingAction !== 'status') ctx.pendingAction = 'book';
+        await this.saveContext(msg, ctx);
+        const auth = await this.ensureAuth(ctx, msg, reply, replyWithButtons, connector);
+        if (auth !== 'ok') return;
+        if (ctx.pendingAction !== 'status') {
+          ctx.pendingAction = undefined;
+          await this.saveContext(msg, ctx);
         }
+        // Flexi jumps straight to the location prompt — skip the extra "all set" bubble.
+        if (!this.isFrictionFree(msg)) await reply(s.allSet);
+        await this.promptForBookingEntry(ctx, msg, reply, replyWithButtons, connector);
         return;
       }
 
@@ -879,6 +867,113 @@ export class FlowEngine {
       return;
     }
     await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+  }
+
+  /**
+   * Ensure the rider has a token, onboarding a new user if needed. The single
+   * source of truth for auth across the friction-free entrypoints (book / ride-type
+   * tap / pickup pin), replacing the two older inline auth blocks.
+   *  - token already in ctx / store → 'ok'
+   *  - existing rider → silent getToken → 'ok'
+   *  - new rider → interactive one-time OTP (startRegistration) → 'registering'
+   *    (OTP prompt sent; the flow resumes after verifyOtp via the state machine)
+   *  - no derivable phone / hard auth error → 'failed' (a message was already sent)
+   */
+  private async ensureAuth(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
+  ): Promise<'ok' | 'registering' | 'failed'> {
+    const s = t(ctx.language);
+    if (ctx.nyToken) return 'ok';
+
+    const userKey = this.scopedUserKey(msg);
+    const stored = await this.tokenStore.get(userKey);
+    if (stored) {
+      ctx.nyToken = stored.nyToken;
+      ctx.personId = stored.personId;
+      ctx.savedLocations = stored.savedLocations;
+      // Refresh saved locations (best-effort) so classic Home/Work stay current.
+      try {
+        const client = new NammaYatriClient(stored.nyToken);
+        ctx.savedLocations = await client.getSavedLocations();
+        await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+      } catch {}
+      await this.saveContext(msg, ctx);
+      return 'ok';
+    }
+
+    const phone = this.extractPhoneFromChannel(msg);
+    if (!phone) {
+      await reply(s.sessionExpired);
+      ctx.state = 'IDLE';
+      await this.saveContext(msg, ctx);
+      return 'failed';
+    }
+
+    ctx.phone = phone;
+    const merchant = this.getMerchantConfig(msg);
+    try {
+      const { token, personId: authPersonId } = await NammaYatriClient.authenticate(phone, merchant);
+      ctx.nyToken = token;
+      const client = new NammaYatriClient(token);
+      let personId = authPersonId;
+      if (!personId) personId = await client.getPersonId().catch(() => '');
+      ctx.personId = personId;
+      try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
+      console.log(`[auth] silent auth via ${msg.source} personId=${personId} merchant=${msg.merchantId || 'default'}`);
+      await this.tokenStore.set(userKey, {
+        nyToken: token,
+        personId,
+        phone,
+        savedLocations: ctx.savedLocations,
+        authenticatedAt: new Date().toISOString(),
+        language: ctx.language,
+      });
+      await this.saveContext(msg, ctx);
+      return 'ok';
+    } catch (err: any) {
+      if (this.isPersonNotFound(err)) {
+        // New rider → one-time OTP registration. Booking intent stays in ctx and
+        // resumes (resumeAfterAuth) once verifyOtp succeeds.
+        await this.startRegistration(ctx, phone, msg, reply, replyWithButtons);
+        return 'registering';
+      }
+      console.warn(`[auth] ensureAuth failed: ${err.message}`);
+      await reply(s.setupFailed(err.message));
+      ctx.state = 'IDLE';
+      await this.saveContext(msg, ctx);
+      return 'failed';
+    }
+  }
+
+  /** After silent auth or OTP registration completes, continue what the rider was
+   *  doing: a deferred status check, a ride type already chosen → pickup, or the
+   *  normal booking entry (chooser / classic origin). Only reached with a token. */
+  private async resumeAfterAuth(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
+  ): Promise<void> {
+    const action = ctx.pendingAction;
+    ctx.pendingAction = undefined;
+    ctx.state = 'IDLE';
+    await this.saveContext(msg, ctx);
+    if (action === 'status') {
+      await this.handleStatus(ctx, msg, reply, replyWithButtons);
+      return;
+    }
+    // A ride type already chosen (e.g. tapped Quick Ride before the OTP step) →
+    // straight to pickup; otherwise the normal entry point.
+    if (this.isFrictionFree(msg) && ctx.rideType &&
+        ((ctx.rideType === 'flexi' && this.flexiOffered(msg)) ||
+         (ctx.rideType === 'regular' && this.regularOffered(msg)))) {
+      await this.promptForPickup(ctx, msg, reply, connector);
+    } else {
+      await this.promptForBookingEntry(ctx, msg, reply, replyWithButtons, connector);
+    }
   }
 
   /** When a merchant offers BOTH ride types, ask which one (after tapping Book).
@@ -1152,44 +1247,17 @@ export class FlowEngine {
       return;
     }
 
-    // Ensure authenticated (silent auto-auth from the WhatsApp number).
+    // Ensure authenticated: silent for existing riders; a new rider is onboarded
+    // via one-time OTP (ensureAuth → 'registering'), after which they'll be asked
+    // to share the pickup again — the pin can't be replayed across the OTP step.
+    // (This replaces the old dead-end that replied "session expired" to new users.)
     if (!ctx.nyToken) {
-      const stored = await this.tokenStore.get(this.scopedUserKey(msg));
-      if (stored) {
-        ctx.nyToken = stored.nyToken;
-        ctx.savedLocations = stored.savedLocations;
-      } else {
-        const phone = this.extractPhoneFromChannel(msg);
-        if (!phone) {
-          await reply(s.sessionExpired);
-          ctx.state = 'IDLE';
-          await this.saveContext(msg, ctx);
-          return;
-        }
-        try {
-          const merchant = this.getMerchantConfig(msg);
-          const { token, personId } = await NammaYatriClient.authenticate(phone, merchant);
-          ctx.nyToken = token;
-          ctx.personId = personId;
-          ctx.phone = phone;
-          await this.tokenStore.set(this.scopedUserKey(msg), {
-            nyToken: token,
-            personId,
-            phone,
-            savedLocations: ctx.savedLocations,
-            authenticatedAt: new Date().toISOString(),
-            language: ctx.language,
-          });
-        } catch (err: any) {
-          // New-user onboarding (language/name/OTP) is Phase 2 — for now, ask
-          // the user to start over rather than dispatch a bad request.
-          console.warn(`[flexi] auth failed: ${err.message}`);
-          await reply(s.sessionExpired);
-          ctx.state = 'IDLE';
-          await this.saveContext(msg, ctx);
-          return;
-        }
-      }
+      ctx.pendingAction = 'book';
+      await this.saveContext(msg, ctx);
+      const auth = await this.ensureAuth(ctx, msg, reply, replyWithButtons, connector);
+      if (auth !== 'ok') return;
+      ctx.pendingAction = undefined;
+      await this.saveContext(msg, ctx);
     }
 
     const client = new NammaYatriClient(ctx.nyToken!);
@@ -2442,6 +2510,7 @@ export class FlowEngine {
     ctx: FlowContext, input: string, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
   ): Promise<void> {
     const s = t(ctx.language);
 
@@ -2470,15 +2539,25 @@ export class FlowEngine {
         language: ctx.language,
       });
 
-      // If person already has a name, skip name entry
-      if (person?.firstName) {
+      const client = new NammaYatriClient(token);
+      // Record the detected/chosen language on the new account (best-effort).
+      // NY expects its uppercase Language enum, not our 2-letter code.
+      if (ctx.language) client.updateProfile({ language: NY_LANGUAGE[ctx.language] }).catch(() => {});
+      try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
+      await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
+
+      if (this.isFrictionFree(msg)) {
+        // Friction-free onboarding: no name step. Intro video (once) + resume
+        // whatever the rider was doing (booking a ride / checking status).
+        await reply(s.otpVerified);
+        await this.sendOnboardingIntroOnce(msg, connector, s);
+        await this.resumeAfterAuth(ctx, msg, reply, replyWithButtons, connector);
+      } else if (person?.firstName) {
+        // Classic: if the person already has a name, skip name entry.
         await reply(s.otpVerified + ' ' + s.allSet);
-        const client = new NammaYatriClient(token);
-        try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
-        await this.tokenStore.updateLocations(userKey, ctx.savedLocations || []);
         await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
       } else {
-        // Ask for name
+        // Classic: ask for name.
         await reply(s.otpVerified);
         ctx.state = 'AWAITING_NAME';
         await this.saveContext(msg, ctx);
@@ -2693,8 +2772,18 @@ export class FlowEngine {
     if (this.isFrictionFree(msg)) {
       const row: { text: string; data: string }[] = [];
       if (await this.hasActiveRide(msg)) row.push({ text: s.trackRide, data: 'status' });
-      row.push({ text: s.bookARide, data: 'book' });
-      row.push({ text: s.moreButton, data: 'more' });
+      // Primary book button: Quick Ride (metered) when offered. When only the
+      // destination ride is offered, use the short generic "Book a Ride" label —
+      // the full "Ride with destination" (24 chars) would be truncated in a
+      // 3-button reply layout, and naming the type is pointless with only one.
+      // Tapping it silently auths / onboards, then asks pickup.
+      if (this.flexiOffered(msg)) {
+        row.push({ text: s.rideTypeFlexi, data: 'ride_type:flexi' });
+      } else {
+        row.push({ text: s.bookARide, data: 'ride_type:regular' });
+      }
+      row.push({ text: s.moreButton, data: 'more' });     // submenu: other ride type + how-it-works + support
+      row.push({ text: s.chooseLanguage, data: 'choose_language' });
       return [row];
     }
     const row: { text: string; data: string }[] = [
@@ -2711,20 +2800,45 @@ export class FlowEngine {
     return ctx.selectStartedAt ? new Date(ctx.selectStartedAt) : new Date(Date.now() - TWENTY_FOUR_HOURS_MS);
   }
 
-  /** Sends the how-it-works intro: the configured video (if any) + the text steps.
-   *  Falls back to text-only when no video URL is set or the channel isn't WhatsApp. */
+  /** Send the configured intro video, if any. Standalone message (a video can't
+   *  carry buttons). Best-effort: a no-op when no URL is set or the channel isn't
+   *  WhatsApp. */
+  private async sendIntroVideo(
+    msg: CommandMessage, connector: Connector | undefined, s: ReturnType<typeof t>,
+  ): Promise<void> {
+    const merchant = this.getMerchantConfig(msg);
+    const videoUrl = merchant?.flexiIntroVideoUrl ?? config.flexiIntroVideoUrl;
+    if (videoUrl && connector instanceof WhatsAppConnector) {
+      await connector.sendVideo(this.getReplyTarget(msg, connector), videoUrl, s.howItWorksCaption, merchant);
+    }
+  }
+
+  /** Send the one-time onboarding intro video, exactly once per user — fired on
+   *  first contact AND right after registration; hasSeenIntro dedupes so nobody
+   *  sees it twice. Fail-open: a store blip must never block the greeting/menu. */
+  private async sendOnboardingIntroOnce(
+    msg: CommandMessage, connector: Connector | undefined, s: ReturnType<typeof t>,
+  ): Promise<void> {
+    const introKey = this.scopedUserKey(msg);
+    try {
+      if (!(await this.tokenStore.hasSeenIntro(introKey))) {
+        await this.sendIntroVideo(msg, connector, s);
+        await this.tokenStore.markIntroSent(introKey);
+      }
+    } catch (err: any) {
+      console.warn(`[intro] check/send failed: ${err?.message || err}`);
+    }
+  }
+
+  /** The "How it works" explainer (opened from the More options submenu): intro
+   *  video + the text steps. Re-watchable — NOT gated by hasSeenIntro. */
   private async sendHowItWorks(
     msg: CommandMessage,
     connector: Connector | undefined,
     reply: (txt: string) => Promise<void>,
     s: ReturnType<typeof t>,
   ): Promise<void> {
-    const merchant = this.getMerchantConfig(msg);
-    const videoUrl = merchant?.flexiIntroVideoUrl ?? config.flexiIntroVideoUrl;
-    if (videoUrl && connector instanceof WhatsAppConnector) {
-      const chatId = this.getReplyTarget(msg, connector);
-      await connector.sendVideo(chatId, videoUrl, s.howItWorksCaption, merchant);
-    }
+    await this.sendIntroVideo(msg, connector, s);
     await reply(s.howItWorksText);
   }
 

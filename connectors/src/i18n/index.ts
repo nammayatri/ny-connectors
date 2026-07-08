@@ -34,3 +34,5 @@ export function getAllLanguages(): { code: SupportedLanguage; name: string; nati
 export function isValidLanguage(code: string): code is SupportedLanguage {
   return code in languages;
 }
+
+export { detectLanguage } from './detect';

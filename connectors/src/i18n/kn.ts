@@ -187,7 +187,7 @@ export const kn: LanguageStrings = {
   flexiRideAlreadyEnded: '✅ ಈ ರೈಡ್ ಈಗಾಗಲೇ ಮುಗಿದಿದೆ.',
 
   // Flexi "hi" ಮೆನು — More ಡ್ರಾಯರ್ + ಇದು ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ + ಬೆಂಬಲ
-  moreButton: '⚙️ ಇನ್ನಷ್ಟು',
+  moreButton: '⚙️ ಇನ್ನಷ್ಟು ಆಯ್ಕೆಗಳು',
   moreTitle: 'ನೀವು ಏನು ಮಾಡಲು ಬಯಸುತ್ತೀರಿ?',
   howItWorks: '❓ ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ',
   contactSupport: '💬 ಬೆಂಬಲ',
@@ -197,8 +197,8 @@ export const kn: LanguageStrings = {
 
   // ರೈಡ್-ಪ್ರಕಾರ ಆಯ್ಕೆ + ಸಾಮಾನ್ಯ ರೈಡ್-ಪ್ರಾರಂಭ
   rideTypePrompt: 'ನೀವು ಹೇಗೆ ಪ್ರಯಾಣಿಸಲು ಬಯಸುತ್ತೀರಿ?',
-  rideTypeFlexi: '🛺 ಫ್ಲೆಕ್ಸಿ',
-  rideTypeRegular: '🚗 ರೆಗ್ಯುಲರ್',
+  rideTypeFlexi: '🛺 ತ್ವರಿತ ರೈಡ್',
+  rideTypeRegular: '🚗 ಗಮ್ಯದ ರೈಡ್',
   rideStartedSimple: '🚦 ನಿಮ್ಮ ರೈಡ್ ಪ್ರಾರಂಭವಾಗಿದೆ. ಪ್ರಯಾಣವನ್ನು ಆನಂದಿಸಿ!',
 
   // ಸಾಮಾನ್ಯ ಒನ್-ವೇ ಫ್ಲೋ (ಪಿಕಪ್ + ಡ್ರಾಪ್ → ಆಟೋ ಶುಲ್ಕ → ಬುಕ್)

@@ -186,7 +186,7 @@ export const en: LanguageStrings = {
   flexiEndOtpFetchError: "⚠️ Couldn't fetch your ride just now. Tap *End ride* again in a moment.",
   flexiRideAlreadyEnded: '✅ This ride has already ended.',
   // Flexi "hi" menu — More drawer + how-it-works + support
-  moreButton: '⚙️ More',
+  moreButton: '⚙️ More options',
   moreTitle: 'What would you like to do?',
   howItWorks: '❓ How it works',
   contactSupport: '💬 Support',
@@ -195,8 +195,8 @@ export const en: LanguageStrings = {
   supportMessage: (phone: string) => `💬 Need help?\n\nCall us: ${phone}\n\nWe're here to help. 🙏`,
   // Ride-type chooser + generic ride-started
   rideTypePrompt: 'How would you like to travel?',
-  rideTypeFlexi: '🛺 Flexi',
-  rideTypeRegular: '🚗 Regular',
+  rideTypeFlexi: '🛺 Quick Ride',
+  rideTypeRegular: '🚗 Ride with destination',
   rideStartedSimple: '🚦 Your ride has started. Enjoy the trip!',
   // Regular one-way flow (pickup + drop → auto fare → book)
   regularDropPrompt: 'Where are you going? 📍\n\nShare your drop location, or type the address.',

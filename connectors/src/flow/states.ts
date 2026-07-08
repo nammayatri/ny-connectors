@@ -52,7 +52,7 @@ export interface FlowContext {
   addLocationOptions?: { description: string; placeId: string }[];
   language?: SupportedLanguage;
   authId?: string;             // from POST /v2/auth during registration
-  pendingAction?: 'status';    // deferred action to run after authentication
+  pendingAction?: 'status' | 'book';  // deferred action to run after authentication (registration)
   rideType?: 'flexi' | 'regular';  // chosen ride type for this booking (friction-free merchants)
   // Flexi (location-only metered booking)
   flexiSearchId?: string;
