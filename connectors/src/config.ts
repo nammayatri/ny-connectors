@@ -53,6 +53,7 @@ export interface Config {
   nyCity: string;
   nyMock: boolean;
   nyLogBodies: boolean;           // log full NY request/response bodies (PII) — disable in prod
+  nyLogPretty: boolean;           // pretty-print (indent + cap) NY bodies in logs — set 0 for single-line prod logs
   rideMode?: RideMode;
   flexiEnabled: boolean;
   regularEnabled: boolean;
@@ -137,6 +138,10 @@ export const config: Config = {
   // Default on (preserves local debugging); set NY_LOG_BODIES=0 in production to
   // stop logging driver name/phone, OTP, and fare on every API call.
   nyLogBodies: /^(1|true|yes)$/i.test(process.env.NY_LOG_BODIES || 'true'),
+  // Pretty-print NY request/response bodies in dev logs (indented + length-capped)
+  // instead of one giant single-line JSON blob. Default on; set NY_LOG_PRETTY=0 for
+  // compact single-line logs (better for prod log aggregators / grep).
+  nyLogPretty: /^(1|true|yes)$/i.test(process.env.NY_LOG_PRETTY || 'true'),
   // Rollout flag for the location-only Flexi flow. Global default for the legacy
   // single merchant; override per-merchant via MERCHANT_{ID}_FLEXI_ENABLED.
   rideMode: GLOBAL_RIDE_MODE,

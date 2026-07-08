@@ -42,6 +42,23 @@ interface LoggedResponse {
   json: <T = any>() => Promise<T>;
 }
 
+// Format a request/response body for the dev logs: pretty-print JSON (indented)
+// so it's readable instead of one giant single-line blob, and cap the length so
+// a huge response (maps autocomplete, full booking) doesn't flood the terminal.
+// NY_LOG_PRETTY=0 keeps the raw single line (compact prod logs). Non-JSON is
+// logged as-is.
+const LOG_BODY_MAX_CHARS = 4000;
+function formatLogBody(raw: string): string {
+  let out = raw;
+  if (config.nyLogPretty) {
+    try { out = JSON.stringify(JSON.parse(raw), null, 2); } catch { /* not JSON — leave raw */ }
+  }
+  if (out.length > LOG_BODY_MAX_CHARS) {
+    out = `${out.slice(0, LOG_BODY_MAX_CHARS)}\n… [truncated ${out.length - LOG_BODY_MAX_CHARS} chars]`;
+  }
+  return out;
+}
+
 async function loggedFetch(url: string, init: RequestInit = {}): Promise<LoggedResponse> {
   const method = init.method || 'GET';
   const headers = sanitizeHeaders(init.headers);
@@ -54,7 +71,7 @@ async function loggedFetch(url: string, init: RequestInit = {}): Promise<LoggedR
   console.log(`[ny-api] → ${method} ${url}`);
   console.log(`[ny-api]   request headers: ${JSON.stringify(headers)}`);
   if (reqBody !== undefined && config.nyLogBodies) {
-    console.log(`[ny-api]   request body: ${reqBody}`);
+    console.log(`[ny-api]   request body: ${formatLogBody(reqBody)}`);
   }
 
   const started = Date.now();
@@ -72,7 +89,7 @@ async function loggedFetch(url: string, init: RequestInit = {}): Promise<LoggedR
   // Response bodies carry PII (driver name/phone, OTP, fare). The tracker calls
   // getBookingDetails on a timer, so gate body logging (NY_LOG_BODIES=0 in prod).
   if (config.nyLogBodies) {
-    console.log(`[ny-api]   response body: ${text}`);
+    console.log(`[ny-api]   response body: ${formatLogBody(text)}`);
   }
 
   return {
