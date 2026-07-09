@@ -1,0 +1,28 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`cancel an active ride > confirms then cancels, clearing the tracker registry > cancelled 1`] = `
+[
+  {
+    "buttons": [
+      {
+        "data": "ride_type:flexi",
+        "text": "🛺 Quick Ride",
+      },
+      {
+        "data": "more",
+        "text": "⚙️ More options",
+      },
+      {
+        "data": "choose_language",
+        "text": "🌐 Language",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "text": "Ride cancelled. ✅
+
+What would you like to do?",
+    "to": "919361176218",
+  },
+]
+`;

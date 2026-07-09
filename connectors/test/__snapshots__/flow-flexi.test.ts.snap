@@ -1,0 +1,182 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 1-pickup-request 1`] = `
+[
+  {
+    "kind": "location_request",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 2-pickup-confirm 1`] = `
+[
+  {
+    "buttons": [
+      "pickup_confirm",
+      "pickup_adjust",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 3-searching-and-driver-card 1`] = `
+[
+  {
+    "buttons": [
+      "cancel",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+  {
+    "buttons": [
+      "cancel_confirm:mock-booking-001",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 4-arrived 1`] = `
+[
+  {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 5-started 1`] = `
+[
+  {
+    "buttons": [
+      "flexi_end_otp:mock-booking-001",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 6-ended 1`] = `
+[
+  {
+    "buttons": [
+      "book",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > full-transcript 1`] = `
+[
+  {
+    "kind": "location_request",
+    "merchant": "FLEXI",
+    "text": "Where should the driver pick you up? 📍",
+    "to": "919361176218",
+  },
+  {
+    "buttons": [
+      {
+        "data": "pickup_confirm",
+        "text": "✅ Confirm pickup",
+      },
+      {
+        "data": "pickup_adjust",
+        "text": "✏️ Change location",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "text": "📍 Your location: near *Shared pin location*.
+
+Shall we go ahead?",
+    "to": "919361176218",
+  },
+  {
+    "buttons": [
+      {
+        "data": "cancel",
+        "text": "❌ Cancel search",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "text": "🛺 Finding an auto near you…",
+    "to": "919361176218",
+  },
+  {
+    "buttons": [
+      {
+        "data": "cancel_confirm:mock-booking-001",
+        "text": "❌ Cancel Ride",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "text": "🛺 *Ravi Kumar* is on the way.
+⭐ 4.9 · 3 min away
+🔢 Vehicle: *KA06 AB 1234*
+
+🔑 Start OTP: *4321*
+
+📞 Call driver: +919998887776
+
+Confirm your destination with the driver.",
+    "to": "919361176218",
+  },
+  {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "text": "🛺 Your auto has arrived!
+Share OTP with the driver to start.
+
+🔑 OTP: *4321* ",
+    "to": "919361176218",
+  },
+  {
+    "buttons": [
+      {
+        "data": "flexi_end_otp:mock-booking-001",
+        "text": "🏁 End ride",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "text": "🚦 Ride started! Enjoy the ride.
+
+Reached your destination? Tap *End ride* below",
+    "to": "919361176218",
+  },
+  {
+    "buttons": [
+      {
+        "data": "book",
+        "text": "🛺 Book another",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "text": "🎉 Ride complete!
+
+💰 Total fare: *₹57* · 4.2 km
+
+🙏 Thank you for riding with Namma Yatri.",
+    "to": "919361176218",
+  },
+]
+`;

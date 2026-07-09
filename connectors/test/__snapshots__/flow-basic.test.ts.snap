@@ -1,0 +1,224 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`More options submenu (both merchant) > opens a submenu with Ride-with-destination + How it works + Support + Main menu > full 1`] = `
+[
+  {
+    "buttons": [
+      {
+        "data": "ride_type:regular",
+        "text": "🚗 Ride with destination",
+      },
+      {
+        "data": "help",
+        "text": "❓ How it works",
+      },
+      {
+        "data": "support",
+        "text": "💬 Support",
+      },
+      {
+        "data": "main_menu",
+        "text": "🏠 Main menu",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "BOTH",
+    "text": "What would you like to do?",
+    "to": "917411122233",
+  },
+]
+`;
+
+exports[`More options submenu (both merchant) > opens a submenu with Ride-with-destination + How it works + Support + Main menu > structured 1`] = `
+[
+  {
+    "buttons": [
+      "ride_type:regular",
+      "help",
+      "support",
+      "main_menu",
+    ],
+    "kind": "buttons",
+    "merchant": "BOTH",
+    "to": "917411122233",
+  },
+]
+`;
+
+exports[`allowlist gate > blocks a non-allowlisted sender with a coming-soon reply and does no flow work 1`] = `
+[
+  {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "text": "🙏 Namma Yatri WhatsApp booking is coming soon. Please check back later.
+
+ಇದು ಶೀಘ್ರದಲ್ಲೇ ಬರಲಿದೆ. ದಯವಿಟ್ಟು ನಂತರ ಪ್ರಯತ್ನಿಸಿ.",
+    "to": "919999999999",
+  },
+]
+`;
+
+exports[`greeting (English default) > sends the intro video once + welcome + menu; no auth on greeting > full 1`] = `
+[
+  {
+    "kind": "video",
+    "link": "https://videos.example/intro.mp4",
+    "merchant": "FLEXI",
+    "text": "How to book an auto on Namma Yatri 🛺",
+    "to": "919361176218",
+  },
+  {
+    "buttons": [
+      {
+        "data": "ride_type:flexi",
+        "text": "🛺 Quick Ride",
+      },
+      {
+        "data": "more",
+        "text": "⚙️ More options",
+      },
+      {
+        "data": "choose_language",
+        "text": "🌐 Language",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "text": "🙏 Namaskara! I'm your Namma Yatri assistant
+
+Ready to book an auto?",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`greeting (English default) > sends the intro video once + welcome + menu; no auth on greeting > structured 1`] = `
+[
+  {
+    "kind": "video",
+    "link": "https://videos.example/intro.mp4",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+  {
+    "buttons": [
+      "ride_type:flexi",
+      "more",
+      "choose_language",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`language switch > lang:hi updates the language and re-renders the menu in Hindi 1`] = `
+[
+  {
+    "buttons": [
+      {
+        "data": "ride_type:flexi",
+        "text": "🛺 झटपट राइड",
+      },
+      {
+        "data": "more",
+        "text": "⚙️ और विकल्प",
+      },
+      {
+        "data": "choose_language",
+        "text": "🌐 भाषा",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "BOTH",
+    "text": "✅ भाषा *हिन्दी* में बदल दी गई।
+
+आप क्या करना चाहेंगे?",
+    "to": "917411122233",
+  },
+]
+`;
+
+exports[`new-user Kannada onboarding via OTP > detects Kannada, onboards through one OTP, resumes into pickup > 1-greeting 1`] = `
+[
+  {
+    "kind": "video",
+    "link": "https://videos.example/intro.mp4",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+  {
+    "buttons": [
+      "ride_type:flexi",
+      "more",
+      "choose_language",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+]
+`;
+
+exports[`new-user Kannada onboarding via OTP > detects Kannada, onboards through one OTP, resumes into pickup > 2-otp-prompt 1`] = `
+[
+  {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+  {
+    "buttons": [
+      "resend_otp",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+]
+`;
+
+exports[`new-user Kannada onboarding via OTP > detects Kannada, onboards through one OTP, resumes into pickup > 3-verified-resume 1`] = `
+[
+  {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+  {
+    "kind": "location_request",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+]
+`;
+
+exports[`returning-user silent auth > taps Quick Ride → silent auth (no OTP) → pickup request 1`] = `
+[
+  {
+    "kind": "location_request",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`status with no active ride > reports no active ride 1`] = `
+[
+  {
+    "buttons": [
+      {
+        "data": "book",
+        "text": "🚕 Book a Ride",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "text": "🔍 No active rides found.
+
+Would you like to book one?",
+    "to": "919361176218",
+  },
+]
+`;

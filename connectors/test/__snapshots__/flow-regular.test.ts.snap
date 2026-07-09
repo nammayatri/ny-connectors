@@ -1,0 +1,235 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`regular (Ride with destination) book + track lifecycle > prices a one-way auto (typed drop) and books + tracks it > 1-drop-options 1`] = `
+[
+  {
+    "buttons": [
+      "regdrop:mock-place-1",
+      "regdrop:mock-place-2",
+      "regdrop:mock-place-3",
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "to": "919812345678",
+  },
+]
+`;
+
+exports[`regular (Ride with destination) book + track lifecycle > prices a one-way auto (typed drop) and books + tracks it > 2-fare-confirm 1`] = `
+[
+  {
+    "kind": "text",
+    "merchant": "REG",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      "regular_book",
+      "regular_change_drop",
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "to": "919812345678",
+  },
+]
+`;
+
+exports[`regular (Ride with destination) book + track lifecycle > prices a one-way auto (typed drop) and books + tracks it > 3-booking-and-driver-card 1`] = `
+[
+  {
+    "buttons": [
+      "cancel",
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      "cancel_confirm:mock-booking-001",
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "to": "919812345678",
+  },
+]
+`;
+
+exports[`regular (Ride with destination) book + track lifecycle > prices a one-way auto (typed drop) and books + tracks it > 4-started 1`] = `
+[
+  {
+    "buttons": [
+      "flexi_end_otp:mock-booking-001",
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "to": "919812345678",
+  },
+]
+`;
+
+exports[`regular (Ride with destination) book + track lifecycle > prices a one-way auto (typed drop) and books + tracks it > 5-ended 1`] = `
+[
+  {
+    "buttons": [
+      "book",
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "to": "919812345678",
+  },
+]
+`;
+
+exports[`regular (Ride with destination) book + track lifecycle > prices a one-way auto (typed drop) and books + tracks it > full-transcript 1`] = `
+[
+  {
+    "kind": "location_request",
+    "merchant": "REG",
+    "text": "Where should the driver pick you up? 📍",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      {
+        "data": "pickup_confirm",
+        "text": "✅ Confirm pickup",
+      },
+      {
+        "data": "pickup_adjust",
+        "text": "✏️ Change location",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "text": "📍 Your location: near *Shared pin location*.
+
+Shall we go ahead?",
+    "to": "919812345678",
+  },
+  {
+    "kind": "location_request",
+    "merchant": "REG",
+    "text": "Where are you going? 📍
+
+Share your drop location, or type the address.",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      {
+        "data": "regdrop:mock-place-1",
+        "text": "Bus Stand — Tumkur Bus S",
+      },
+      {
+        "data": "regdrop:mock-place-2",
+        "text": "Bus Stand — Amanikere La",
+      },
+      {
+        "data": "regdrop:mock-place-3",
+        "text": "Bus Stand — SIT College ",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "text": "Which one? Pick your drop:",
+    "to": "919812345678",
+  },
+  {
+    "kind": "text",
+    "merchant": "REG",
+    "text": "🛺 Getting your fare…",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      {
+        "data": "regular_book",
+        "text": "✅ Book auto",
+      },
+      {
+        "data": "regular_change_drop",
+        "text": "✏️ Change drop",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "text": "🛺 Auto to *Tumkur Bus Stand*
+💰 Approx *₹52*
+
+Shall I book it?",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      {
+        "data": "cancel",
+        "text": "❌ Cancel search",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "text": "🛺 Booking your auto…",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      {
+        "data": "cancel_confirm:mock-booking-001",
+        "text": "❌ Cancel Ride",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "text": "🛺 *Ravi Kumar* is on the way.
+⭐ 4.9 · 3 min away
+🔢 Vehicle: *KA06 AB 1234*
+
+🔑 Start OTP: *4321*
+
+📞 Call driver: +919998887776
+
+Confirm your destination with the driver.",
+    "to": "919812345678",
+  },
+  {
+    "kind": "text",
+    "merchant": "REG",
+    "text": "🛺 Your auto has arrived!
+Share OTP with the driver to start.
+
+🔑 OTP: *4321* ",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      {
+        "data": "flexi_end_otp:mock-booking-001",
+        "text": "🏁 End ride",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "text": "🚦 Ride started! Enjoy the ride.
+
+Reached your destination? Tap *End ride* below",
+    "to": "919812345678",
+  },
+  {
+    "buttons": [
+      {
+        "data": "book",
+        "text": "🛺 Book another",
+      },
+    ],
+    "kind": "buttons",
+    "merchant": "REG",
+    "text": "🎉 Ride complete!
+
+💰 Total fare: *₹57* · 4.2 km
+
+🙏 Thank you for riding with Namma Yatri.",
+    "to": "919812345678",
+  },
+]
+`;

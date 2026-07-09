@@ -1,0 +1,11 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`SOS → mark safe > confirms SOS, triggers it, then marks the rider safe > marked-safe 1`] = `
+[
+  {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;

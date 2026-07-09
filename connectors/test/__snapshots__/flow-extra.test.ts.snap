@@ -1,0 +1,68 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`main_menu > resets and shows the welcome menu 1`] = `
+[
+  {
+    "buttons": [
+      "ride_type:flexi",
+      "more",
+      "choose_language",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+]
+`;
+
+exports[`pin-first onboarding (no dead-end) > a new user who shares a pin first is onboarded via OTP, not dead-ended > 1-pin-first-otp 1`] = `
+[
+  {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+  {
+    "buttons": [
+      "resend_otp",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+]
+`;
+
+exports[`pin-first onboarding (no dead-end) > a new user who shares a pin first is onboarded via OTP, not dead-ended > 2-resume 1`] = `
+[
+  {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+  {
+    "kind": "video",
+    "link": "https://videos.example/intro.mp4",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+  {
+    "kind": "location_request",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+]
+`;
+
+exports[`resend OTP > resends the OTP during registration 1`] = `
+[
+  {
+    "buttons": [
+      "resend_otp",
+    ],
+    "kind": "buttons",
+    "merchant": "FLEXI",
+    "to": "919100000999",
+  },
+]
+`;
