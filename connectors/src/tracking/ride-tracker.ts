@@ -182,9 +182,17 @@ export class RideTracker {
       meta.flexiBookingId = undefined;
       meta.flexiSearchId = undefined;
       meta.flexiQuoteId = undefined;
+      meta.regularSearchId = undefined;
+      meta.regularEstimateId = undefined;
+      meta.regularFare = undefined;
       meta.activeBookingId = undefined;
       meta.rideType = undefined;
       meta.cancelRequested = false;
+      // Clear any SOS raised during the ride — otherwise the stale sosId makes the
+      // NEXT ride render "Mark safe" instead of the SOS button and mis-target
+      // markRideAsSafe. (The engine's resetContext already drops it; keep the two
+      // terminal-reset paths in sync.)
+      meta.sosId = undefined;
       await this.sessionManager.updateContext(entry.source, entry.sessionUserId, meta);
     }
   }
