@@ -92,6 +92,18 @@ export class FlowEngine {
       await connector.sendMessage(chatId, fallbackText);
     };
 
+    // Access gate: while the pilot WhatsApp line is private, only allowlisted
+    // numbers get the live flow; everyone else sees "coming soon". Applies only to
+    // WhatsApp (the leaked surface); other channels are dev/testing. An empty
+    // allowlist (ALLOWED_PHONES="") disables the gate and reopens to all.
+    if (message.source === 'whatsapp' && config.allowedPhones.length > 0) {
+      const senderPhone = this.extractPhoneFromChannel(message);
+      if (!senderPhone || !config.allowedPhones.includes(senderPhone)) {
+        await reply('🙏 Namma Yatri WhatsApp booking is coming soon. Please check back later.\n\nಇದು ಶೀಘ್ರದಲ್ಲೇ ಬರಲಿದೆ. ದಯವಿಟ್ಟು ನಂತರ ಪ್ರಯತ್ನಿಸಿ.');
+        return;
+      }
+    }
+
     // Answer callback query if it's a button press (Telegram)
     if (message.metadata?.isCallback && connector instanceof TelegramConnector) {
       await connector.answerCallback(message.metadata.callbackQueryId as string);

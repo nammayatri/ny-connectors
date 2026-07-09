@@ -54,6 +54,7 @@ export interface Config {
   nyMock: boolean;
   nyLogBodies: boolean;           // log full NY request/response bodies (PII) — disable in prod
   nyLogPretty: boolean;           // pretty-print (indent + cap) NY bodies in logs — set 0 for single-line prod logs
+  allowedPhones: string[];        // WhatsApp allowlist (normalized 10-digit); empty = open to all
   rideMode?: RideMode;
   flexiEnabled: boolean;
   regularEnabled: boolean;
@@ -102,6 +103,26 @@ export function resolveRideMode(rideModeEnv?: string, flexiEnabledEnv?: string):
 }
 const GLOBAL_RIDE_MODE = resolveRideMode(process.env.RIDE_MODE, process.env.FLEXI_ENABLED);
 
+// Normalizes a phone into the same 10-digit form the flow engine compares against
+// (strips non-digits and a leading 91 country code). Used to build the allowlist.
+function normalizePhone(raw: string): string {
+  let p = (raw || '').replace(/[^0-9]/g, '');
+  if (p.startsWith('91') && p.length > 10) p = p.substring(2);
+  return p;
+}
+
+// Access allowlist for the WhatsApp flow. While the pilot number is private,
+// only these numbers get the live flow; everyone else sees "coming soon".
+// Comma-separated ALLOWED_PHONES overrides the default. Set ALLOWED_PHONES=""
+// (empty) to open access to everyone.
+function parseAllowedPhones(raw: string | undefined): string[] {
+  if (raw === undefined) return ['9361176218'];
+  return raw
+    .split(',')
+    .map((p) => normalizePhone(p))
+    .filter((p) => p.length === 10);
+}
+
 export const config: Config = {
   port: parseInt(process.env.PORT || '3000', 10),
   webhookUrl: process.env.WEBHOOK_URL || '',
@@ -142,6 +163,11 @@ export const config: Config = {
   // instead of one giant single-line JSON blob. Default on; set NY_LOG_PRETTY=0 for
   // compact single-line logs (better for prod log aggregators / grep).
   nyLogPretty: /^(1|true|yes)$/i.test(process.env.NY_LOG_PRETTY || 'true'),
+  // Restrict the live WhatsApp flow to specific numbers while the pilot line is
+  // private (it leaked). Defaults to the owner's number; everyone else gets a
+  // "coming soon" reply. Override with ALLOWED_PHONES (comma-separated); set it
+  // empty to reopen to all.
+  allowedPhones: parseAllowedPhones(process.env.ALLOWED_PHONES),
   // Rollout flag for the location-only Flexi flow. Global default for the legacy
   // single merchant; override per-merchant via MERCHANT_{ID}_FLEXI_ENABLED.
   rideMode: GLOBAL_RIDE_MODE,
