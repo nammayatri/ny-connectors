@@ -15,7 +15,7 @@ export interface MerchantConfig {
   nyDashboardMerchant: string;
   nyCity: string;
   nyTrackingUrl: string; // template with {rideId} placeholder
-  rideMode?: RideMode;     // which ride types this merchant offers (undefined = classic)
+  rideMode?: RideMode;     // which ride types this merchant offers (undefined = neither → unsupported)
   flexiEnabled: boolean;   // derived from rideMode: offers metered Flexi rides
   regularEnabled: boolean; // derived from rideMode: offers destination Regular rides
   flexiBaseFare?: number; // display-only metered tariff, ₹ base (shown to riders)
@@ -28,15 +28,11 @@ export interface MerchantConfig {
 
 export interface Config {
   port: number;
-  webhookUrl: string;
-  telegramBotToken: string;
   whatsappVerifyToken: string;
   whatsappAppSecret: string;
   whatsappAccessToken: string;
   whatsappPhoneNumberId: string;
   whatsappSkipVerify: boolean;
-  slackSigningSecret: string;
-  slackBotToken: string;
   redisMode: RedisMode;
   redisUrl: string;
   redisClusterNodes: { host: string; port: number }[];
@@ -44,8 +40,6 @@ export interface Config {
   nyBaseUrl: string;
   nyAuthUrl: string;
   nyPreAuthToken: string;
-  telegramSecretToken: string;
-  nyAppSecret: string;
   nyMerchantId: string;
   nyDashboardUrl: string;
   nyDashboardToken: string;
@@ -94,8 +88,8 @@ function resolveRedisMode(raw: string, clusterNodesProvided: boolean): RedisMode
 }
 
 // Which ride types a merchant offers. Explicit RIDE_MODE wins; else fall back to
-// the legacy FLEXI_ENABLED flag (truthy → 'flexi'). undefined = a classic
-// (non-friction-free) merchant that offers neither Flexi nor Regular.
+// the legacy FLEXI_ENABLED flag (truthy → 'flexi'). undefined = offers neither
+// Flexi nor Regular (an unsupported merchant — flagged loudly at config load).
 export function resolveRideMode(rideModeEnv?: string, flexiEnabledEnv?: string): RideMode | undefined {
   const m = (rideModeEnv || '').trim().toLowerCase();
   if (m === 'flexi' || m === 'regular' || m === 'both') return m;
@@ -125,8 +119,6 @@ function parseAllowedPhones(raw: string | undefined): string[] {
 
 export const config: Config = {
   port: parseInt(process.env.PORT || '3000', 10),
-  webhookUrl: process.env.WEBHOOK_URL || '',
-  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN || '',
   whatsappAppSecret: process.env.WHATSAPP_APP_SECRET || '',
   whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
@@ -134,8 +126,6 @@ export const config: Config = {
   // Dev-only: skip inbound webhook signature verification (use if the app secret
   // is uncertain while testing through a tunnel). NEVER enable in production.
   whatsappSkipVerify: /^(1|true|yes)$/i.test(process.env.WHATSAPP_SKIP_VERIFY || ''),
-  slackSigningSecret: process.env.SLACK_SIGNING_SECRET || '',
-  slackBotToken: process.env.SLACK_BOT_TOKEN || '',
   redisMode: resolveRedisMode(
     process.env.REDIS_MODE || '',
     !!process.env.REDIS_CLUSTER_NODES,
@@ -146,8 +136,6 @@ export const config: Config = {
   nyBaseUrl: process.env.NY_BASE_URL || 'https://api.moving.tech/pilot/app/v2',
   nyAuthUrl: process.env.NY_AUTH_URL || 'https://api.moving.tech/pilot/app/v2',
   nyPreAuthToken: process.env.NY_PRE_AUTH_TOKEN || '',
-  telegramSecretToken: process.env.TELEGRAM_SECRET_TOKEN || '',
-  nyAppSecret: process.env.NY_APP_SECRET || '',
   nyMerchantId: process.env.NY_MERCHANT_ID || '',
   nyDashboardUrl: process.env.NY_DASHBOARD_URL || 'https://dashboard.moving.tech/api/bap',
   nyDashboardToken: process.env.NY_DASHBOARD_TOKEN || '',
@@ -223,7 +211,7 @@ function loadMerchants(): void {
     const p = `MERCHANT_${id}_`;
     // Explicit per-merchant RIDE_MODE / legacy FLEXI_ENABLED. Only inherit the
     // global mode when the merchant sets NEITHER, so an explicit
-    // MERCHANT_x_FLEXI_ENABLED=false still forces classic (exact back-compat).
+    // MERCHANT_x_FLEXI_ENABLED=false still forces "neither" (exact back-compat).
     const rmOverride = process.env[`${p}RIDE_MODE`] !== undefined || process.env[`${p}FLEXI_ENABLED`] !== undefined;
     const rm = rmOverride ? resolveRideMode(process.env[`${p}RIDE_MODE`], process.env[`${p}FLEXI_ENABLED`]) : config.rideMode;
     const cfg: MerchantConfig = {
@@ -283,6 +271,19 @@ function loadMerchants(): void {
   }
 
   console.log(`[config] Loaded ${merchantsById.size} merchant(s): ${[...merchantsById.keys()].join(', ')}`);
+
+  // Every supported merchant must offer at least one ride type (Flexi and/or
+  // Regular). A merchant with neither is an unsupported config now that the
+  // classic flow is gone — surface it loudly at boot rather than dead-ending a
+  // rider mid-flow.
+  const misconfigured = [...merchantsById.values()].filter((m) => !m.flexiEnabled && !m.regularEnabled);
+  if (misconfigured.length) {
+    console.error(
+      `[config] ⚠️  ${misconfigured.length} merchant(s) offer NEITHER Flexi nor Regular ` +
+      `(${misconfigured.map((m) => m.id).join(', ')}). Set RIDE_MODE / MERCHANT_{id}_RIDE_MODE ` +
+      `to flexi | regular | both — these merchants cannot serve any booking.`,
+    );
+  }
 }
 
 loadMerchants();

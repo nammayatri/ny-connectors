@@ -15,4 +15,4 @@ if (config.nyMock) {
 // Type export: `NammaYatriClient` also names the instance type (the mock subclasses it).
 export type NammaYatriClient = RealNammaYatriClient;
 
-export type { NYPlace, NYPlaceDetails, NYEstimate, NYFlexiQuote, NYSavedLocation, NYRideHistoryItem } from './client';
+export type { NYPlace, NYPlaceDetails, NYEstimate, NYFlexiQuote, NYSavedLocation } from './client';

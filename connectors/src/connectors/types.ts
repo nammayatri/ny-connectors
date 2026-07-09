@@ -1,7 +1,8 @@
 import { Request } from 'express';
+import { MerchantConfig } from '../config';
 
-export type MessageSource = 'telegram' | 'whatsapp' | 'slack';
-export type ChatType = 'direct' | 'group' | 'channel';
+export type MessageSource = 'whatsapp';
+export type ChatType = 'direct';
 
 export interface CommandMessage {
   source: MessageSource;
@@ -18,12 +19,20 @@ export interface CommandMessage {
   raw: unknown;
 }
 
+// The outbound surface of the (WhatsApp) connector. The engine programs to this
+// interface — every send is merchant-scoped and reports delivery (the ride
+// tracker uses the boolean to decide whether to retry a status update).
 export interface Connector {
   readonly source: MessageSource;
   parseIncoming(req: Request): CommandMessage | null;
   verifyWebhook(req: Request): boolean;
-  // Returns true when the platform accepted the message; connectors that don't
-  // report delivery (Telegram/Slack) return void. The ride tracker uses the
-  // boolean (from WhatsApp) to decide whether to retry a status update.
-  sendMessage(chatId: string, text: string): Promise<void | boolean>;
+  sendMessage(chatId: string, text: string, merchant?: MerchantConfig): Promise<boolean>;
+  sendWithButtons(
+    chatId: string,
+    text: string,
+    buttons: { text: string; data: string; description?: string }[],
+    merchant?: MerchantConfig,
+  ): Promise<boolean>;
+  sendLocationRequest(chatId: string, text: string, merchant?: MerchantConfig): Promise<boolean>;
+  sendVideo(chatId: string, link: string, caption?: string, merchant?: MerchantConfig): Promise<boolean>;
 }

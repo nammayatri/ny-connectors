@@ -5,7 +5,6 @@ import {
   NYPlaceDetails,
   NYEstimate,
   NYFlexiQuote,
-  NYRideHistoryItem,
   NYSavedLocation,
 } from './client';
 
@@ -102,10 +101,6 @@ export class MockNammaYatriClient extends NammaYatriClient {
     ];
   }
 
-  async saveLocation(tag: string, _details: NYPlaceDetails): Promise<void> {
-    log(`saveLocation(${tag})`);
-  }
-
   async searchPlaces(searchText: string, _near?: { lat: number; lon: number }): Promise<NYPlace[]> {
     log(`searchPlaces("${searchText}")`);
     return [
@@ -171,10 +166,6 @@ export class MockNammaYatriClient extends NammaYatriClient {
   // The real booking commit — a NO-OP in mock. No driver is ever dispatched.
   async selectEstimate(estimateId: string): Promise<void> {
     log(`selectEstimate(${estimateId}) — NO-OP (no real dispatch)`);
-  }
-
-  async pollSelectResult(_personId: string, _estimateId: string): Promise<{ bookingId: string | null; raw: any }> {
-    return { bookingId: 'mock-booking-001', raw: {} };
   }
 
   async getActiveBookings(_createdAfter?: Date): Promise<any[]> {
@@ -246,10 +237,6 @@ export class MockNammaYatriClient extends NammaYatriClient {
     return { id: bookingId, status: bookingStatus, merchantExoPhone: '08046970000', rideList: [ride] };
   }
 
-  async cancelSearch(_estimateId: string): Promise<void> {
-    log('cancelSearch()');
-  }
-
   async cancelRide(_bookingId: string, _bookingStatus?: string): Promise<void> {
     log('cancelRide()');
   }
@@ -263,17 +250,4 @@ export class MockNammaYatriClient extends NammaYatriClient {
     log('markRideAsSafe()');
   }
 
-  async getRideHistory(_limit = 10): Promise<NYRideHistoryItem[]> {
-    return [
-      {
-        id: 'mock-ride-hist-1',
-        status: 'COMPLETED',
-        createdAt: '2026-06-30T10:00:00.000Z',
-        serviceTierName: 'Auto',
-        estimatedFare: 48,
-        fromLocation: { area: 'Sira Gate', city: 'Tumakuru' },
-        toLocation: { area: 'Tumkur Bus Stand', city: 'Tumakuru' },
-      },
-    ];
-  }
 }

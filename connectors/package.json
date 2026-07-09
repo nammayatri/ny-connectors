@@ -1,7 +1,7 @@
 {
   "name": "message-gateway",
   "version": "1.0.0",
-  "description": "Unified message gateway for Telegram, WhatsApp, and Slack webhooks",
+  "description": "WhatsApp ride-booking gateway for Namma Yatri (Quick Ride + Ride with destination)",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

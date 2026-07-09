@@ -138,17 +138,6 @@ export interface NYFlexiQuote {
   vehicleVariant?: string;
 }
 
-export interface NYRideHistoryItem {
-  id: string;
-  status: string;
-  createdAt: string;
-  vehicleVariant?: string;  // mapped from vehicleServiceTierType in listv2
-  serviceTierName?: string; // e.g. "Auto", "Auto Priority"
-  estimatedFare?: number;
-  fromLocation?: { area?: string; city?: string };
-  toLocation?: { area?: string; city?: string };
-}
-
 export interface NYSavedLocation {
   tag: string;
   lat: number;
@@ -295,36 +284,6 @@ export class NammaYatriClient {
     }
     const data = await res.json() as any;
     return data.id || data.personId || data.customerId || data.userId || '';
-  }
-
-  async saveLocation(tag: string, details: NYPlaceDetails): Promise<void> {
-    const res = await loggedFetch(`${config.nyBaseUrl}/savedLocation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', token: this.token },
-      body: JSON.stringify({
-        area: details.address.area || '',
-        areaCode: '',
-        building: details.address.building || '',
-        city: details.address.city || '',
-        country: details.address.country || '',
-        door: '',
-        isMoved: false,
-        lat: details.lat,
-        locationName: '',
-        lon: details.lon,
-        placeId: details.placeId || '',
-        state: details.address.state || '',
-        street: details.address.street || '',
-        tag,
-        ward: '',
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.text().catch(() => '');
-      console.error(`[savedLocation] save failed ${res.status}: ${err.substring(0, 300)}`);
-      throw new Error(`Save location failed: ${res.status}`);
-    }
-    console.log(`[savedLocation] saved tag=${tag} placeId=${details.placeId}`);
   }
 
   async getSavedLocations(): Promise<NYSavedLocation[]> {
@@ -609,25 +568,6 @@ export class NammaYatriClient {
   }
 
   /**
-   * Polls /rideBooking/select/{personId}/{estimateId}/result until bookingId is returned.
-   * Returns the bookingId string, or null if not yet assigned.
-   */
-  async pollSelectResult(personId: string, estimateId: string): Promise<{ bookingId: string | null; raw: any }> {
-    const url = `${config.nyBaseUrl}/rideBooking/select/${personId}/${estimateId}/result`;
-    const res = await loggedFetch(url, {
-      headers: { 'Content-Type': 'application/json', token: this.token },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn(`[booking] pollSelectResult ${res.status}: ${body.substring(0, 200)}`);
-      return { bookingId: null, raw: null };
-    }
-    const data = await res.json() as any;
-    const bookingId = data.bookingId || data.id || null;
-    return { bookingId, raw: data };
-  }
-
-  /**
    * Fetches full booking details including driver info, OTP etc.
    * Tries /rideBooking/{bookingId} first, then falls back to listv2.
    */
@@ -658,15 +598,6 @@ export class NammaYatriClient {
     }
     const data = await res.json() as any;
     return data.contents ?? data;
-  }
-
-  async cancelSearch(estimateId: string): Promise<void> {
-    const res = await loggedFetch(`${config.nyBaseUrl}/estimate/${estimateId}/cancelSearch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', token: this.token },
-      body: JSON.stringify({}),
-    });
-    if (!res.ok) throw new Error(`Cancel search failed: ${res.status}`);
   }
 
   async triggerSOS(rideId: string, customerLat?: number, customerLon?: number): Promise<string> {
@@ -776,39 +707,4 @@ export class NammaYatriClient {
     return rides;
   }
 
-  async getRideHistory(limit = 10): Promise<NYRideHistoryItem[]> {
-    const params = new URLSearchParams({
-      limit: limit.toString(),
-      onlyActive: 'false',
-      clientId: 'ACP_SERVER',
-    });
-    const url = `${config.nyBaseUrl}/rideBooking/listV2?${params}`;
-    const res = await loggedFetch(url, {
-      headers: { 'Content-Type': 'application/json', token: this.token },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`Get ride history failed: ${res.status} ${body}`);
-    }
-    const data = await res.json() as any;
-    const list = data.list || [];
-    console.log(`[history] raw list length: ${list.length}`);
-    if (list.length > 0) {
-      const c = list[0]?.contents || list[0];
-      console.log(`[history] contents keys: ${Object.keys(c).join(', ')}`);
-    }
-    return list.map((item: any) => {
-      const c = item.contents ?? item;
-      return {
-        id: c.id,
-        status: c.status,
-        createdAt: c.createdAt,
-        vehicleVariant: c.vehicleServiceTierType ?? c.vehicleVariant,
-        serviceTierName: c.serviceTierName,
-        estimatedFare: c.estimatedFare,
-        fromLocation: c.fromLocation,
-        toLocation: c.bookingDetails?.contents?.toLocation ?? c.toLocation,
-      };
-    });
-  }
 }

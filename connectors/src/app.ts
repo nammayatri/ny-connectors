@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { TelegramConnector, WhatsAppConnector, SlackConnector } from './connectors';
+import { WhatsAppConnector } from './connectors';
 import { Connector } from './connectors/types';
 import { createSessionManager, createTokenStore, createRideRegistry } from './session';
 import { FlowEngine } from './flow';
@@ -57,10 +57,6 @@ async function handleIncoming(connector: Connector, req: Request, res: Response)
   res.sendStatus(200);
 }
 
-// --- Telegram ---
-const telegram = new TelegramConnector();
-app.post('/webhook/telegram', (req, res) => { handleIncoming(telegram, req, res); });
-
 // --- WhatsApp ---
 const whatsapp = new WhatsAppConnector();
 
@@ -98,25 +94,6 @@ app.get('/webhook/whatsapp', (req: Request, res: Response) => {
 });
 
 app.post('/webhook/whatsapp', (req, res) => { handleIncoming(whatsapp, req, res); });
-
-// --- Slack ---
-const slack = new SlackConnector();
-
-app.post('/webhook/slack', (req: Request, res: Response) => {
-  if (req.body?.type === 'url_verification') {
-    res.json({ challenge: req.body.challenge });
-    return;
-  }
-  handleIncoming(slack, req, res);
-});
-
-// Slack interactive payloads (button clicks) — sent as form-encoded with a payload field
-app.post('/webhook/slack/interactions', express.urlencoded({
-  extended: true,
-  verify: (req: any, _res: any, buf: Buffer) => { req.rawBody = buf.toString(); },
-}), (req: Request, res: Response) => {
-  handleIncoming(slack, req, res);
-});
 
 const shutdown = async () => {
   rideTracker.stop();

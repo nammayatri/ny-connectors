@@ -1,15 +1,8 @@
-import { NYPlaceDetails, NYEstimate, NYSavedLocation } from '../ny';
+import { NYPlaceDetails, NYSavedLocation } from '../ny';
 import { SupportedLanguage } from '../i18n';
 
 export type FlowState =
   | 'IDLE'
-  | 'AWAITING_CONTACT'
-  | 'AWAITING_PHONE'
-  | 'AWAITING_ORIGIN'
-  | 'CONFIRMING_ORIGIN'
-  | 'AWAITING_DESTINATION'
-  | 'CONFIRMING_DESTINATION'
-  | 'SEARCHING_RIDES'
   | 'AWAITING_PICKUP'
   | 'CONFIRMING_PICKUP'
   | 'FLEXI_SEARCHING'
@@ -17,17 +10,11 @@ export type FlowState =
   | 'CONFIRMING_REGULAR_DROP'
   | 'CONFIRMING_REGULAR_FARE'
   | 'REGULAR_SEARCHING'
-  | 'SHOWING_ESTIMATES'
-  | 'BOOKING'
   | 'TRACKING'
-  | 'CONFIRMING_CANCEL'
   | 'CONFIRMING_SOS'
   | 'CONFIRMING_MARK_SAFE'
-  | 'AWAITING_ADD_LOCATION'
-  | 'CONFIRMING_ADD_LOCATION'
   | 'CHOOSING_LANGUAGE'
-  | 'AWAITING_OTP'
-  | 'AWAITING_NAME';
+  | 'AWAITING_OTP';
 
 export interface FlowContext {
   state: FlowState;
@@ -36,20 +23,12 @@ export interface FlowContext {
   savedLocations?: NYSavedLocation[];
   phone?: string;
   origin?: NYPlaceDetails;
-  originTag?: string;
   destination?: NYPlaceDetails;
-  originOptions?: { description: string; placeId: string }[];
   destinationOptions?: { description: string; placeId: string }[];
-  searchId?: string;
-  estimates?: NYEstimate[];
-  selectedEstimateId?: string;
-  selectedServiceTier?: string;   // serviceTierName of last chosen vehicle, for retry
   activeBookingId?: string;
   selectStartedAt?: string;   // ISO timestamp just before selectEstimate — used to filter listV2 results
   cancelRequested?: boolean;
   sosId?: string;
-  addingLocationTag?: string;
-  addLocationOptions?: { description: string; placeId: string }[];
   language?: SupportedLanguage;
   authId?: string;             // from POST /v2/auth during registration
   pendingAction?: 'status' | 'book';  // deferred action to run after authentication (registration)

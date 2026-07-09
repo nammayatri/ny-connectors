@@ -6,8 +6,6 @@ export interface LanguageStrings {
   nativeLanguageName: string;  // e.g. "English", "हिन्दी"
 
   // Welcome & menu
-  welcomeMessage: string;
-  welcomeBack: string;
   bookARide: string;
   trackRide: string;
   chooseLanguage: string;
@@ -16,84 +14,24 @@ export interface LanguageStrings {
   moreLanguages: string;
 
   // Auth flow
-  needSignIn: string;
-  enterPhone: string;
-  invalidPhone: string;
-  enterAccessCode: string;
-  authSuccess: string;
-  authSuccessFirstTime: string;
   setupFailed: (err: string) => string;
-  authFailed: (err: string) => string;
-  sharePhone: string;
-  shareOwnPhone: string;
-  sharePhonePrompt: string;
-  couldNotReadPhone: string;
-  allSet: string;
 
   // Registration (OTP-based)
   personNotFound: string;
   otpSent: string;
-  enterOtp: string;
   invalidOtp: string;
   resendOtp: string;
   otpResent: string;
   otpResendFailed: (err: string) => string;
   otpVerified: string;
   otpVerifyFailed: (err: string) => string;
-  askName: string;
-  skipName: string;
-  nameUpdated: (name: string) => string;
-  nameUpdateFailed: string;
 
   // Origin & destination
-  whereToGo: string;
-  whereToGoWithRoutes: string;
-  enterPickupAndDrop: string;
-  enterPickupPrompt: string;
-  enterDropPrompt: string;
-  locationPinReceived: (address: string) => string;
-  favouriteLocations: string;
-  addHome: string;
-  addWork: string;
-  enterHomeAddress: string;
-  enterWorkAddress: string;
-  selectLocationFor: (tag: string) => string;
-  locationSaved: (tag: string) => string;
-  locationSaveFailed: string;
-  fromHome: string;
-  fromWork: string;
-  moreOptions: string;
-  pickSavedOrType: string;
-  typePickupPlace: string;
-  selectPickup: string;
-  searchAgain: string;
-  pickup: (place: string) => string;
-  whereTo: string;
-  whereToWithSaved: string;
-  typeDropPlace: string;
-  selectDrop: string;
-  drop: (place: string) => string;
   noPlacesFound: string;
-  invalidChoice: (max: number) => string;
-  couldNotFindLocations: string;
-  fromLabel: (tag: string) => string;
 
   // Ride search & estimates
-  searchingRides: string;
-  noRidesAvailable: string;
-  noRidesAvailableRetry: string;
-  activeRideExists: string;
-  basedOnPastRides: string;
-  availableRides: string;
-  availableRidesForRoute: string;
 
   // Booking
-  booking: (tier: string, fare: number) => string;
-  stillSearching: (elapsed: number) => string;
-  rideConfirmed: string;
-  rideBooked: string;
-  waitingForDriver: string;
-  trackYourRide: string;
   track: string;
   callDriver: string;
   cancelRide: string;
@@ -106,17 +44,10 @@ export interface LanguageStrings {
   noActiveRide: string;
 
   // No driver found
-  noDriverFound: (tier: string) => string;
-  retrySameVehicle: string;
-  tryDifferentVehicle: string;
   mainMenu: string;
-  retrying: (tier: string) => string;
-  tierNotAvailable: (tier: string) => string;
-  tryAgain: string;
 
   // Status
   activeRide: string;
-  noActiveRides: string;
   noActiveRidesBook: string;
 
   // Cancel
@@ -124,7 +55,6 @@ export interface LanguageStrings {
   cancelConfirmWithDriver: (driver: string, vehicle?: string) => string;
   yesCancelIt: string;
   noKeepIt: string;
-  rideSearchCancelled: string;
   rideCancelled: string;
   rideCompleted: string;
   rideAlreadyCancelled: string;
@@ -208,5 +138,4 @@ export interface LanguageStrings {
   somethingWentWrong: string;
   sessionExpired: string;
   error: (msg: string) => string;
-  rideBeingBooked: string;
 }

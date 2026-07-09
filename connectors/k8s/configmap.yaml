@@ -4,4 +4,7 @@ metadata:
   name: message-gateway-config
 data:
   PORT: "3000"
-  WEBHOOK_URL: "http://your-destination-service/incoming"
+  # Non-secret runtime config. Secrets (WhatsApp + NY credentials) live in the
+  # message-gateway-secrets Secret, not here.
+  RIDE_MODE: "both"
+  NY_BASE_URL: "https://api.moving.tech/pilot/app/v2"

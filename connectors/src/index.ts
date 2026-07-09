@@ -4,10 +4,9 @@ import { config, getAllMerchants } from './config';
 
 const server = app.listen(config.port, () => {
   console.log(`[gateway] Message Gateway started on port ${config.port}`);
-  console.log(`[gateway] Webhook URL: ${config.webhookUrl || '(not configured)'}`);
   console.log(`[gateway] Redis: ${config.redisUrl}`);
   console.log(`[gateway] Session TTL: ${config.sessionTtlSeconds}s`);
-  console.log(`[gateway] Connectors: telegram, whatsapp, slack`);
+  console.log(`[gateway] Connectors: whatsapp`);
   console.log(`[gateway] Dashboard URL: ${config.nyDashboardUrl}`);
 
   const merchants = getAllMerchants();
