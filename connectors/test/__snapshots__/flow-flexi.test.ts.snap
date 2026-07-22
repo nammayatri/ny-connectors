@@ -13,6 +13,11 @@ exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pu
 exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 2-pickup-confirm 1`] = `
 [
   {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "to": "919361176218",
+  },
+  {
     "buttons": [
       "pickup_confirm",
       "pickup_adjust",
@@ -58,10 +63,7 @@ exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pu
 exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 5-started 1`] = `
 [
   {
-    "buttons": [
-      "flexi_end_otp:mock-booking-001",
-    ],
-    "kind": "buttons",
+    "kind": "text",
     "merchant": "FLEXI",
     "to": "919361176218",
   },
@@ -90,6 +92,12 @@ exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pu
     "to": "919361176218",
   },
   {
+    "kind": "text",
+    "merchant": "FLEXI",
+    "text": "📍 Getting your fare…",
+    "to": "919361176218",
+  },
+  {
     "buttons": [
       {
         "data": "pickup_confirm",
@@ -104,6 +112,8 @@ exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pu
     "merchant": "FLEXI",
     "text": "📍 Your location: near *Shared pin location*.
 
+🛺 ₹40 + ₹12/km · 10PM–5AM: 1.5× fare
+
 Shall we go ahead?",
     "to": "919361176218",
   },
@@ -116,7 +126,8 @@ Shall we go ahead?",
     ],
     "kind": "buttons",
     "merchant": "FLEXI",
-    "text": "🛺 Finding an auto near you…",
+    "text": "🛺 Finding an auto near you…
+🛺 ₹40 + ₹12/km · 10PM–5AM: 1.5× fare",
     "to": "919361176218",
   },
   {
@@ -149,17 +160,9 @@ Share OTP with the driver to start.
     "to": "919361176218",
   },
   {
-    "buttons": [
-      {
-        "data": "flexi_end_otp:mock-booking-001",
-        "text": "🏁 End ride",
-      },
-    ],
-    "kind": "buttons",
+    "kind": "text",
     "merchant": "FLEXI",
-    "text": "🚦 Ride started! Enjoy the ride.
-
-Reached your destination? Tap *End ride* below",
+    "text": "🚦 Your ride has started. Enjoy the trip!",
     "to": "919361176218",
   },
   {

@@ -82,9 +82,14 @@ export interface LanguageStrings {
   // Flexi (location-only metered booking)
   welcome: string;
   flexiSharePrompt: string;
-  flexiFareRate: (base: number, perKm: number) => string;
-  flexiConfirmPickup: (address: string) => string;
-  flexiConfirmSavedPlace: (name: string) => string;
+  // Brief ack after a pin is shared, while the ~10s quote search runs.
+  flexiPricing: string;
+  // Pre-booking fare shown at the pickup-confirm prompt + re-stated in "finding".
+  flexiFareBreakup: (base?: number, perKm?: number, nightMult?: number, nightWindow?: string) => string;
+  // Neutral fallback when a quote carries no rate-card breakup (only a headline fare).
+  flexiFareFrom: (amount: number) => string;
+  flexiConfirmPickup: (address: string, fareLine?: string) => string;
+  flexiConfirmSavedPlace: (name: string, fareLine?: string) => string;
   pickupConfirmButton: string;
   pickupAdjustButton: string;
   flexiFinding: string;
@@ -100,18 +105,11 @@ export interface LanguageStrings {
   flexiOutOfArea: (area: string) => string;
   // Flexi ride-progress updates (pushed by the background tracker)
   flexiArrived: (otp: string) => string;
-  flexiRideStarted: string;
   flexiFareFinal: (amount: number, km?: number) => string;
   flexiFareUnavailable: string;
   flexiRideEnded: (fareLine: string) => string;
   flexiRideCancelled: string;
   flexiBookAnother: string;
-  // Flexi end-ride OTP (rental: rider reveals it on the "End ride" button, shares with driver)
-  flexiEndRideButton: string;
-  flexiEndOtpShare: (otp: string) => string;
-  flexiEndOtpNotReady: string;
-  flexiEndOtpFetchError: string;
-  flexiRideAlreadyEnded: string;
   // Flexi "hi" menu — More drawer + how-it-works + support
   moreButton: string;
   moreTitle: string;

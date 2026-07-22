@@ -129,13 +129,51 @@ export interface NYEstimate {
   estimatedPickupDuration?: number;
 }
 
-// A Flexi (MeterRide) quote. Flexi results come back as QUOTES (QuoteBased),
-// not on-demand estimates. `quoteId` is what we POST to confirm.
+// A Flexi (EasyBooking) quote. EasyBooking results come back as QUOTES
+// (QuoteBased), not on-demand estimates. `quoteId` is what we POST to confirm;
+// `estimatedFare` is the server-provided starting fare we surface to the rider.
 export interface NYFlexiQuote {
   quoteId: string;
   serviceTierName?: string;
   estimatedFare?: number;
   vehicleVariant?: string;
+  // The rate-card, flattened from the quote's `quoteFareBreakup` (title → amount).
+  // EasyBooking zeroes `quoteDetails.contents`, so this array is the ONLY place the
+  // real base/per-km/night-shift values live. Shown to the rider pre-booking.
+  fareBreakup?: Record<string, number>;
+  // Quote validity (ISO). Used to re-search silently if the rider takes >5 min to
+  // confirm, so we never confirm a stale quoteId.
+  validTill?: string;
+}
+
+// Flatten a quote's `quoteFareBreakup` array ([{ title, priceWithCurrency:{amount} }])
+// into a plain title → amount map. Returns undefined when there is no breakup, so
+// callers can cleanly fall back. Prices may be a bare number or { amount } object.
+export function parseQuoteFareBreakup(inner: any): Record<string, number> | undefined {
+  const list = inner?.quoteFareBreakup;
+  if (!Array.isArray(list) || list.length === 0) return undefined;
+  const out: Record<string, number> = {};
+  for (const item of list) {
+    if (!item || typeof item.title !== 'string') continue;
+    const amount = toFareNumber(item.priceWithCurrency ?? item.price);
+    if (amount != null) out[item.title] = amount;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+// NY/BECKN price fields arrive as a bare number, a numeric string, or a
+// { amount, currency } object depending on the endpoint. Coerce to a number so
+// NYFlexiQuote.estimatedFare is always numeric (or undefined if unusable) — the
+// engine's `Number.isFinite` fare guard does NOT coerce, so an un-coerced string
+// would silently drop the rider's starting-fare line.
+export function toFareNumber(v: any): number | undefined {
+  if (v == null) return undefined;
+  const raw = typeof v === 'object' ? v.amount : v;
+  // Number(null) and Number('') are both 0 — guard so a null/empty amount DROPS
+  // (undefined) instead of silently rendering as ₹0.
+  if (raw == null || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 export interface NYSavedLocation {
@@ -465,19 +503,18 @@ export class NammaYatriClient {
   }
 
   // -------------------------------------------------------------------------
-  // Flexi = OneWay MeterRide: pickup-only search, metered (base + ₹/km) fare
-  // priced server-side from actual distance. See the Flexi plan. NOTE: requires
-  // the NY backend to allow customer-originated meter-ride search
-  // (isMeterRideSearch) — until then this only works against NY_MOCK.
+  // Flexi = EasyBooking: a destination-less, pickup-only search. The fare is a
+  // metered Progressive tariff priced server-side from the actual GPS distance
+  // driven, so the search sends NO destination and NO rental package — just the
+  // origin and startTime. The rider is shown the quote's `estimatedFare`
+  // (starting fare) up front; the final fare is computed at ride end.
+  // (NY backend: rider-app SearchReq variant `EasyBookingSearch`, wire tag
+  // `fareProductType: "EASY_BOOKING"` — see nammayatri PR #15753.)
   // -------------------------------------------------------------------------
   async searchFlexi(origin: NYPlaceDetails): Promise<string> {
-    // Flexi is served by NY's RENTAL product — a normal customer CAN originate it
-    // (unlike MeterRide, which is role-restricted). Package size is configurable via
-    // FLEXI_RENTAL_DISTANCE_KM / FLEXI_RENTAL_DURATION_MIN (default 10 km / 60 min). NY
-    // only quotes when the km fit the duration's included km (~10 km/hr), so keep
-    // km <= ~10 x hours. startTime = NOW so it dispatches immediately.
-    const RENTAL_DISTANCE_M = config.flexiRentalDistanceM;
-    const RENTAL_DURATION_S = config.flexiRentalDurationS;
+    // EasyBookingSearchReq requires only `origin` + `startTime`; the rest are
+    // optional. startTime = NOW so it dispatches immediately. No estimated
+    // distance/duration (destination-less by design).
     const body = {
       contents: {
         origin: {
@@ -493,10 +530,8 @@ export class NammaYatriClient {
         },
         isSourceManuallyMoved: false,
         startTime: new Date().toISOString(),
-        estimatedRentalDistance: RENTAL_DISTANCE_M,
-        estimatedRentalDuration: RENTAL_DURATION_S,
       },
-      fareProductType: 'RENTAL',
+      fareProductType: 'EASY_BOOKING',
     };
     const res = await loggedFetch(`${config.nyBaseUrl}/rideSearch`, {
       method: 'POST',
@@ -506,10 +541,10 @@ export class NammaYatriClient {
     if (!res.ok) {
       const err = await res.json().catch(() => ({} as any)) as any;
       const msg = err.errorMessage || err.errorCode || '';
-      throw new Error(`Flexi (rental) search failed: ${res.status}${msg ? ` — ${msg}` : ''}`);
+      throw new Error(`Flexi (EasyBooking) search failed: ${res.status}${msg ? ` — ${msg}` : ''}`);
     }
     const data = await res.json() as any;
-    console.log(`[searchFlexi/rental] searchId=${data.searchId}`);
+    console.log(`[searchFlexi/easybooking] searchId=${data.searchId}`);
     return data.searchId;
   }
 
@@ -522,15 +557,25 @@ export class NammaYatriClient {
       throw new Error(`Get flexi quotes failed: ${res.status}`);
     }
     const data = await res.json() as any;
-    // Rental quotes are tagged under `onRentalCab` (on-demand/one-way under `onDemandCab`);
-    // the inner object holds the quoteId, vehicleVariant and estimatedTotalFare.
+    // VERIFIED against merged main (nammayatri @6ca198b4, EasyBooking flow):
+    // an EasyBooking quote is destination-less, so the rider-app wraps it as
+    // `onRentalCab` — there is NO dedicated `onEasyBookingCab` key (OfferRes only
+    // has onDemandCab/onRentalCab/metro/publicTransport/onMeterRide —
+    // Domain/Action/UI/Quote.hs). We keep `onEasyBookingCab` first as a harmless
+    // forward-compat guard; `onRentalCab` is what actually resolves. Since this
+    // connector only ever issues EASY_BOOKING searches (never RENTAL), onRentalCab
+    // is unambiguous for us; if EasyBooking and Rental ever coexisted, disambiguate
+    // on `inner.tripCategory.tag === 'EasyBooking'`, not the wrapper key. The inner
+    // object holds `id` (quoteId), vehicleVariant and estimatedTotalFare/estimatedFare.
     const quotes: NYFlexiQuote[] = (data.quotes || []).map((q: any) => {
-      const inner = q.onRentalCab || q.onDemandCab || q;
+      const inner = q.onEasyBookingCab || q.onRentalCab || q.onDemandCab || q;
       return {
         quoteId: inner.id,
         serviceTierName: inner.serviceTierName || inner.vehicleVariant,
-        estimatedFare: inner.estimatedTotalFare ?? inner.estimatedFare,
+        estimatedFare: toFareNumber(inner.estimatedTotalFare ?? inner.estimatedFare),
         vehicleVariant: inner.vehicleVariant,
+        fareBreakup: parseQuoteFareBreakup(inner),
+        validTill: inner.validTill,
       };
     }).filter((q: NYFlexiQuote) => q.quoteId);
     // Prefer an auto (AUTO_RICKSHAW) quote for Flexi; else fall back to the first.
@@ -539,7 +584,7 @@ export class NammaYatriClient {
     return quotes;
   }
 
-  // Confirm a Flexi quote — classic BECKN confirm path (empty body). Returns the bookingId.
+  // Confirm a Flexi (EasyBooking) quote — classic BECKN confirm path (empty body). Returns the bookingId.
   async confirmQuote(quoteId: string): Promise<string> {
     const res = await loggedFetch(`${config.nyBaseUrl}/rideSearch/quotes/${quoteId}/confirm`, {
       method: 'POST',

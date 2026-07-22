@@ -80,9 +80,19 @@ export const kn: LanguageStrings = {
   // Flexi (location-only metered booking)
   welcome: '🙏 ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ Namma Yatri ಸಹಾಯಕ\n\nಆಟೋ ಬುಕ್ ಮಾಡಲು ಸಿದ್ಧರಾ?',
   flexiSharePrompt: 'ಚಾಲಕ ನಿಮ್ಮನ್ನು ಎಲ್ಲಿಂದ ಕರೆದೊಯ್ಯಬೇಕು? 📍',
-  flexiFareRate: (base: number, perKm: number) => `🛺 ಮೀಟರ್ ಆಟೋ · ₹${base} + ₹${perKm}/ಕಿಮೀ ಇಂದ`,
-  flexiConfirmPickup: (address: string) => `📍 ನಿಮ್ಮ ಸ್ಥಳ: *${address}* ಹತ್ತಿರ.\n\nಮುಂದುವರಿಯೋಣವೇ?`,
-  flexiConfirmSavedPlace: (name: string) => `📍 ನೀವು ಉಳಿಸಿದ ಸ್ಥಳವನ್ನು ಕಳುಹಿಸಿದ್ದೀರಿ:\n *${name}*.\nಮುಂದುವರಿಯೋಣವೇ?`,
+  flexiPricing: '📍 ನಿಮ್ಮ ದರವನ್ನು ಪಡೆಯುತ್ತಿದ್ದೇವೆ…',
+  flexiFareBreakup: (base?: number, perKm?: number, nightMult?: number, nightWindow?: string) => {
+    const fare = base != null && perKm != null ? `₹${base} + ₹${perKm}/ಕಿಮೀ`
+      : base != null ? `₹${base}`
+      : perKm != null ? `₹${perKm}/ಕಿಮೀ` : '';
+    const night = nightMult != null && nightWindow ? ` · ${nightWindow}: ${nightMult}× ಶುಲ್ಕ` : '';
+    return `🛺 ${fare}${night}`;
+  },
+  flexiFareFrom: (amount: number) => `🛺 ₹${amount} ರಿಂದ`,
+  flexiConfirmPickup: (address: string, fareLine?: string) =>
+    `📍 ನಿಮ್ಮ ಸ್ಥಳ: *${address}* ಹತ್ತಿರ.${fareLine ? `\n\n${fareLine}` : ''}\n\nಮುಂದುವರಿಯೋಣವೇ?`,
+  flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
+    `📍 ನೀವು ಉಳಿಸಿದ ಸ್ಥಳವನ್ನು ಕಳುಹಿಸಿದ್ದೀರಿ:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\nಮುಂದುವರಿಯೋಣವೇ?`,
   pickupConfirmButton: '✅ ಪಿಕಪ್ ಖಚಿತಪಡಿಸಿ',
   pickupAdjustButton: '✏️ ಸ್ಥಳ ಬದಲಿಸಿ',
   flexiFinding: '🛺 ನಿಮ್ಮ ಹತ್ತಿರ ಆಟೋ ಹುಡುಕುತ್ತಿದ್ದೇವೆ…',
@@ -101,7 +111,6 @@ export const kn: LanguageStrings = {
   flexiArrived: (otp: string) => otp
     ? `🛺 ನಿಮ್ಮ ಆಟೋ ಬಂದಿದೆ!\nರೈಡ್ ಪ್ರಾರಂಭಿಸಲು ಚಾಲಕರಿಗೆ OTP ಹೇಳಿ.\n\n🔑 OTP: *${otp}* `
     : '🛺 ನಿಮ್ಮ ಆಟೋ ಬಂದಿದೆ!\nದಯವಿಟ್ಟು ಪಿಕಪ್ ಪಾಯಿಂಟ್‌ನಲ್ಲಿ ನಿಮ್ಮ ಚಾಲಕರನ್ನು ಭೇಟಿಯಾಗಿ.',
-  flexiRideStarted: "🚦 ರೈಡ್ ಪ್ರಾರಂಭವಾಗಿದೆ! ಪ್ರಯಾಣವನ್ನು ಆನಂದಿಸಿ.\n\nನಿಮ್ಮ ಗಮ್ಯಸ್ಥಾನ ತಲುಪಿದಿರಾ? ಕೆಳಗಿನ *ರೈಡ್ ಮುಗಿಸಿ* ಒತ್ತಿ",
   flexiFareFinal: (amount: number, km?: number) =>
     km != null ? `💰 ಒಟ್ಟು ಶುಲ್ಕ: *₹${amount}* · ${km} ಕಿಮೀ` : `💰 ಒಟ್ಟು ಶುಲ್ಕ: *₹${amount}*`,
   flexiFareUnavailable: '💰 ನಿಮ್ಮ ಶುಲ್ಕ ಶೀಘ್ರದಲ್ಲೇ ಖಚಿತವಾಗುತ್ತದೆ.',
@@ -109,12 +118,6 @@ export const kn: LanguageStrings = {
   flexiRideCancelled: '❌ ನಿಮ್ಮ ರೈಡ್ ರದ್ದಾಗಿದೆ.\n\nಎಲ್ಲಿಗಾದರೂ ಹೋಗಬೇಕೇ? ಯಾವಾಗ ಬೇಕಾದರೂ ಇನ್ನೊಂದು ಆಟೋ ಬುಕ್ ಮಾಡಿ.',
   flexiBookAnother: '🛺 ಇನ್ನೊಂದು ಬುಕ್ ಮಾಡಿ',
 
-  // Flexi end-ride OTP (rental)
-  flexiEndRideButton: '🏁 ರೈಡ್ ಮುಗಿಸಿ',
-  flexiEndOtpShare: (otp: string) => `🏁 ಮುಕ್ತಾಯ OTP: *${otp}*\n\nನೀವು ನಿಮ್ಮ ಗಮ್ಯಸ್ಥಾನ ತಲುಪಿದಾಗ ಇದನ್ನು ನಿಮ್ಮ ಚಾಲಕರಿಗೆ ತಿಳಿಸಿ.`,
-  flexiEndOtpNotReady: "⏳ ನಿಮ್ಮ ರೈಡ್ ಇನ್ನೂ ಪ್ರಾರಂಭವಾಗಿಲ್ಲ. ನೀವು ದಾರಿಯಲ್ಲಿ ಹೊರಟ ಕೂಡಲೇ ಮುಕ್ತಾಯ OTP ಸಿಗುತ್ತದೆ.",
-  flexiEndOtpFetchError: "⚠️ ಸದ್ಯಕ್ಕೆ ನಿಮ್ಮ ರೈಡ್ ಪಡೆಯಲಾಗಲಿಲ್ಲ. ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ ಮತ್ತೆ *ರೈಡ್ ಮುಗಿಸಿ* ಒತ್ತಿ.",
-  flexiRideAlreadyEnded: '✅ ಈ ರೈಡ್ ಈಗಾಗಲೇ ಮುಗಿದಿದೆ.',
 
   // Flexi "hi" ಮೆನು — More ಡ್ರಾಯರ್ + ಇದು ಹೇಗೆ ಕೆಲಸ ಮಾಡುತ್ತದೆ + ಬೆಂಬಲ
   moreButton: '⚙️ ಇನ್ನಷ್ಟು ಆಯ್ಕೆಗಳು',

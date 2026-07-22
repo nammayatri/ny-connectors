@@ -91,20 +91,25 @@ export class RideTracker {
 
   private async processRide(entry: ActiveRide): Promise<void> {
     const auth = await this.tokenStore.get(entry.userKey);
-    if (!auth?.nyToken) {
-      // Can't poll without the rider's token (logged out / expired). Leave the
-      // entry for max-age cleanup rather than dropping it on a transient miss.
+    // Fall back to the fixed test token when the store has none: NY_FIXED_USER_TOKEN
+    // injects the session token into the engine, not the token store, so the tracker
+    // would otherwise never poll and ride-status pushes would silently stop. Refused
+    // in prod (see config.ts), so this fallback has no production effect.
+    const nyToken = auth?.nyToken ?? config.nyFixedUserToken;
+    if (!nyToken) {
+      // Can't poll without a token (logged out / expired). Leave the entry for
+      // max-age cleanup rather than dropping it on a transient miss.
       return;
     }
 
-    const client = new NammaYatriClient(auth.nyToken);
+    const client = new NammaYatriClient(nyToken);
     // Direct read only — no listV2 fallback, which can't represent INPROGRESS/
     // COMPLETED and could return a different booking. On failure, skip and retry.
     const booking = await client.getBookingDetails(entry.bookingId, { allowListFallback: false });
     if (!booking || booking.id !== entry.bookingId) return;
 
     const stage = classifyStage(booking);
-    const lang = entry.language ?? auth.language;
+    const lang = entry.language ?? auth?.language;
     // Resolve the merchant (for the WhatsApp token) by phone number, falling back
     // to the persisted merchantId so a multi-merchant deploy never sends from the
     // wrong number if phoneNumberId is ever missing.

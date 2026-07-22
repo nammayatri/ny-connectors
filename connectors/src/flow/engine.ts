@@ -1,11 +1,11 @@
 import { FlowContext, INITIAL_CONTEXT } from './states';
-import { buildDriverCard, formatDialable, classifyStage } from './flexi-messages';
+import { buildDriverCard, formatDialable, classifyStage, buildFlexiFareLine } from './flexi-messages';
 import { NammaYatriClient, NYPlaceDetails, NYFlexiQuote, NYEstimate } from '../ny';
 import { isWithinServiceArea } from '../ny/cities';
 import { SessionManager } from '../session/manager';
 import { MemorySessionManager } from '../session/memory-store';
 import { TokenStore } from '../session/token-store';
-import { createTokenStore, createRideRegistry, RideRegistry, ActiveRide } from '../session';
+import { createTokenStore, createRideRegistry, createMessageDedup, RideRegistry, ActiveRide, MessageDedup } from '../session';
 import { Connector, CommandMessage } from '../connectors/types';
 import { config, MerchantConfig } from '../config';
 import { t, getAllLanguages, isValidLanguage, detectLanguage, SupportedLanguage } from '../i18n';
@@ -24,6 +24,10 @@ const NY_LANGUAGE: Record<SupportedLanguage, string> = {
 const CANCEL_TRIGGERS = ['cancel', 'stop', 'exit', 'quit', 'reset'];
 const STATUS_TRIGGERS = ['status', 'track', 'where is my ride'];
 
+// Absolute fallback lifetime for a priced flexi quote (from capture) when the
+// backend quote carries no/garbage `validTill`. EasyBooking quotes are valid ~5 min.
+const FLEXI_QUOTE_TTL_MS = 5 * 60 * 1000;
+
 function formatAddress(details: NYPlaceDetails): string {
   const { area, building, street } = details.address;
   const parts = [building, street, area].filter(Boolean);
@@ -37,13 +41,22 @@ function sleep(ms: number): Promise<void> {
 export class FlowEngine {
   private tokenStore: TokenStore;
   private rideRegistry: RideRegistry;
+  private messageDedup: MessageDedup;
 
-  constructor(private sessionManager: AnySessionManager, tokenStore?: TokenStore, rideRegistry?: RideRegistry) {
+  constructor(private sessionManager: AnySessionManager, tokenStore?: TokenStore, rideRegistry?: RideRegistry, messageDedup?: MessageDedup) {
     this.tokenStore = tokenStore ?? createTokenStore();
     this.rideRegistry = rideRegistry ?? createRideRegistry();
+    this.messageDedup = messageDedup ?? createMessageDedup();
   }
 
   async handleMessage(message: CommandMessage, connector: Connector): Promise<void> {
+    // Drop duplicate webhook deliveries (WhatsApp is at-least-once) BEFORE any side
+    // effect, so a redelivered message can't double-process (e.g. double-book).
+    // Atomic across replicas (Redis SET NX): the first claim wins, later ones drop.
+    if (message.messageId && !(await this.messageDedup.claim(message.messageId))) {
+      console.log(`[flow] dropping duplicate message id=${message.messageId}`);
+      return;
+    }
     const chatId = this.getReplyTarget(message, connector);
     const merchantCfg = this.getMerchantConfig(message);
     const reply = async (text: string): Promise<void> => {
@@ -70,7 +83,12 @@ export class FlowEngine {
 
     // Hydrate token and language from persistent store if not already in session
     const userKey = this.scopedUserKey(message);
-    if (!ctx.nyToken) {
+    if (config.nyFixedUserToken) {
+      // TEST OVERRIDE (NY_FIXED_USER_TOKEN): route EVERY user through one fixed NY
+      // session token, skipping silent auth + OTP onboarding entirely. Re-applied on
+      // every message so it survives a 401-clear. Refused in production (see config.ts).
+      ctx.nyToken = config.nyFixedUserToken;
+    } else if (!ctx.nyToken) {
       const stored = await this.tokenStore.get(userKey);
       if (stored) {
         ctx.nyToken = stored.nyToken;
@@ -295,17 +313,17 @@ export class FlowEngine {
         // Flexi searches immediately; Regular asks for a drop, then estimates + books.
         // Default for a pin shared straight from IDLE (no chooser): regular-only
         // merchants → regular, otherwise flexi.
-        const rideType = ctx.rideType ?? (this.regularOffered(message) && !this.flexiOffered(message) ? 'regular' : 'flexi');
+        const rideType = this.resolveRideType(ctx, message);
         if (rideType === 'regular') {
           await this.promptForRegularDrop(ctx, message, reply, connector);
         } else {
-          await this.startFlexiSearch(ctx, message, reply, replyWithButtons, connector);
+          await this.confirmFlexiBooking(ctx, message, reply, replyWithButtons, connector);
         }
         return;
       }
       if (input === 'pickup_adjust') {
         // "Change location" → re-open location sharing directly, as a minimal bubble.
-        await this.promptForPickup(ctx, message, reply, connector, { suppressFare: true });
+        await this.promptForPickup(ctx, message, reply, connector);
         return;
       }
       // Regular one-way: confirm the auto fare → book, or change the drop.
@@ -315,46 +333,6 @@ export class FlowEngine {
       }
       if (input === 'regular_change_drop' && ctx.nyToken) {
         await this.promptForRegularDrop(ctx, message, reply, connector);
-        return;
-      }
-
-      // FLEXI: reveal the end-ride OTP on demand (the "End ride" button on the
-      // "ride started" message). For rentals NY generates a distinct end OTP at
-      // ride start; the rider shares it with the driver, who enters it to end the
-      // ride. We only SURFACE it here — we never end the ride ourselves.
-      if (input.startsWith('flexi_end_otp:')) {
-        const bookingId = input.slice('flexi_end_otp:'.length);
-        // bookingId is a server-generated id (UUID). Reject anything with URL-path
-        // chars — a user could TYPE this prefix with a crafted value ("../..", "x/cancel")
-        // and inject into the /rideBooking/{id} path.
-        if (!ctx.nyToken || !/^[A-Za-z0-9_-]+$/.test(bookingId)) { await reply(s.sessionExpired); return; }
-        // Ownership check: NY's booking read does NOT enforce that the booking
-        // belongs to the caller (upstream IDOR), so only reveal the OTP for a ride
-        // THIS rider booked. The registry (durable, survives the 30-min session
-        // TTL) maps the bookingId to the booker's userKey; a mismatch or a
-        // no-longer-tracked ride gets the neutral "already ended" reply.
-        const owned = await this.rideRegistry.get(bookingId);
-        if (!owned || owned.userKey !== this.scopedUserKey(message)) { await reply(s.flexiRideAlreadyEnded); return; }
-        const client = new NammaYatriClient(ctx.nyToken);
-        const b = await client.getBookingDetails(bookingId, { allowListFallback: false }).catch(() => null);
-        if (!b) {
-          // Transient fetch failure — invite a retry rather than the misleading
-          // "ride hasn't started yet" fallback.
-          await replyWithButtons(s.flexiEndOtpFetchError, [[{ text: s.flexiEndRideButton, data: `flexi_end_otp:${bookingId}` }]]);
-          return;
-        }
-        const ride = b?.rideList?.[0];
-        const status = String(ride?.status || b?.status || '').toUpperCase();
-        const endOtp = ride?.endOtp;
-        if (status === 'COMPLETED' || status === 'CANCELLED') {
-          await reply(s.flexiRideAlreadyEnded);
-        } else if (endOtp) {
-          await replyWithButtons(s.flexiEndOtpShare(String(endOtp)), [
-            [{ text: s.flexiEndRideButton, data: `flexi_end_otp:${bookingId}` }],
-          ]);
-        } else {
-          await reply(s.flexiEndOtpNotReady);
-        }
         return;
       }
 
@@ -565,18 +543,6 @@ export class FlowEngine {
   // -------------------------------------------------------------------------
   // Flexi (location-only metered booking)
   // -------------------------------------------------------------------------
-
-  /** The configured metered-tariff line ("🛺 Metered auto · from ₹40 + ₹12/km"),
-   *  or undefined when the merchant has no fare rate set. Display-only. */
-  private flexiFareLine(ctx: FlowContext, msg: CommandMessage): string | undefined {
-    const m = this.getMerchantConfig(msg);
-    const base = m?.flexiBaseFare;
-    const perKm = m?.flexiPerKm;
-    // Number.isFinite rejects undefined AND NaN (a malformed env value), so a
-    // bad config omits the line rather than rendering "₹NaN".
-    if (!Number.isFinite(base) || !Number.isFinite(perKm)) return undefined;
-    return t(ctx.language).flexiFareRate(base as number, perKm as number);
-  }
 
   /** Route a "start booking" entrypoint to the flexi (location-only) flow when
    *  the merchant has FLEXI enabled, otherwise the classic pickup→drop flow. */
@@ -924,16 +890,14 @@ export class FlowEngine {
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
     connector?: Connector,
-    opts?: { suppressFare?: boolean },
   ) {
     const s = t(ctx.language);
     ctx.state = 'AWAITING_PICKUP';
     await this.saveContext(msg, ctx);
-    // On a "Change location" re-prompt, suppress the fare line (already shown) so the
-    // bubble is minimal — its native Send-location button is what opens the map.
-    // The metered fare line is Flexi-only; Regular gets an upfront estimate later.
-    const fare = (opts?.suppressFare || ctx.rideType === 'regular') ? undefined : this.flexiFareLine(ctx, msg);
-    const body = fare ? `${s.flexiSharePrompt}\n\n${fare}` : s.flexiSharePrompt;
+    // No fare to show at this step yet — the rider shares a pin, and the fare
+    // rate-card is surfaced on the confirm prompt once the quote search returns
+    // (see priceAndConfirmPickup). The final fare is GPS-metered at ride end.
+    const body = s.flexiSharePrompt;
     if (connector) {
       const chatId = this.getReplyTarget(msg, connector);
       await connector.sendLocationRequest(chatId, body, this.getMerchantConfig(msg));
@@ -943,7 +907,7 @@ export class FlowEngine {
   }
 
   /** Handle a shared location pin for a Flexi booking: auto-auth, search a
-   *  metered (MeterRide) ride, confirm, poll for a driver, show the driver card. */
+   *  metered (EasyBooking) ride, confirm, poll for a driver, show the driver card. */
   private async handlePickup(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
@@ -1010,10 +974,126 @@ export class FlowEngine {
       origin.address = { ...origin.address, area: location.name || location.address };
     }
     ctx.origin = origin;
-    // Don't dispatch yet — confirm the pickup first (PDF screen 04). If the
-    // user shared a NAMED/saved place, location.name is set (a live "current
-    // location" share has none) → warn it may not be where they physically are.
-    await this.sendPickupConfirm(ctx, msg, replyWithButtons, location.name);
+    await this.saveContext(msg, ctx);
+    if (this.resolveRideType(ctx, msg) === 'flexi') {
+      // Flexi: price the ride NOW, before the rider commits — EasyBooking search
+      // is quote-only and dispatches NO driver (that happens on confirm), so we
+      // can surface a concrete fare in the confirm prompt. If the user shared a
+      // NAMED/saved place, location.name is set (a live share has none) → the
+      // confirm still warns it may not be their physical spot.
+      await this.priceAndConfirmPickup(ctx, msg, reply, replyWithButtons, connector, location.name);
+    } else {
+      // Regular: metered upfront pricing doesn't apply — confirm the pickup, then
+      // ask for the drop and price the one-way auto from there.
+      await this.sendPickupConfirm(ctx, msg, replyWithButtons, location.name);
+    }
+  }
+
+  /** Search the metered (EasyBooking) quote for the shared pickup and show the
+   *  confirm prompt with the fare. NO driver is dispatched here (search is
+   *  quote-only) — booking happens on the Confirm tap (confirmFlexiBooking). */
+  private async priceAndConfirmPickup(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector,
+    namedPlace?: string,
+  ): Promise<void> {
+    const s = t(ctx.language);
+    if (!ctx.nyToken || !ctx.origin) {
+      await this.promptForPickup(ctx, msg, reply, connector);
+      return;
+    }
+    const client = new NammaYatriClient(ctx.nyToken);
+    // FLEXI_SEARCHING while pricing, so a "Cancel search"/reset that lands during
+    // the blocking search below can be detected (state reset to IDLE) afterwards.
+    ctx.state = 'FLEXI_SEARCHING';
+    ctx.cancelRequested = false;
+    await this.saveContext(msg, ctx);
+    // Brief ack — a real EasyBooking on_search takes ~10s to return quotes.
+    await reply(s.flexiPricing);
+    let quote: NYFlexiQuote | null = null;
+    try {
+      quote = await this.searchFlexiQuote(client, ctx, msg);
+    } catch (err: any) {
+      console.error(`[flexi] price search failed: ${err.message}`);
+      // A 401 means the silent-auth token expired — clear it so the next message
+      // re-auths, rather than looping on a dead token.
+      if (err.message?.includes('401')) {
+        ctx.nyToken = undefined;
+        await this.tokenStore.delete(this.scopedUserKey(msg));
+        await this.saveContext(msg, ctx);
+      }
+      await this.flexiNoAuto(ctx, msg, replyWithButtons);
+      return;
+    }
+    if (!quote) {
+      await this.flexiNoAuto(ctx, msg, replyWithButtons);
+      return;
+    }
+    // Honor a cancel/reset that landed during the blocking search — otherwise the
+    // confirm prompt would resurrect a flow the rider just cancelled.
+    const after = await this.getContext(msg);
+    if (after.cancelRequested || after.state === 'IDLE') return;
+    after.flexiSearchId = ctx.flexiSearchId;
+    after.flexiQuoteId = quote.quoteId;
+    after.flexiQuote = {
+      fareBreakup: quote.fareBreakup,
+      startingFare: quote.estimatedFare,
+      validTill: quote.validTill,
+      capturedAt: new Date().toISOString(),
+    };
+    await this.saveContext(msg, after);
+    await this.sendPickupConfirm(after, msg, replyWithButtons, namedPlace);
+  }
+
+  /** Run one EasyBooking search + poll its results, returning the chosen (auto)
+   *  quote or null if none priced. Shared by pricing (on share) and the silent
+   *  re-price on confirm when a quote has expired. */
+  private async searchFlexiQuote(
+    client: NammaYatriClient, ctx: FlowContext, msg: CommandMessage,
+  ): Promise<NYFlexiQuote | null> {
+    const searchId = await client.searchFlexi(ctx.origin!);
+    // In-memory only — do NOT persist the caller's snapshot here. A "Cancel" that
+    // landed during the (blocking) searchFlexi above may have already reset the
+    // stored context to IDLE; writing this stale snapshot back would clobber that
+    // cancel. The caller re-reads the fresh context and persists searchId onto it.
+    ctx.flexiSearchId = searchId;
+    let quotes: NYFlexiQuote[] = [];
+    // Real EasyBooking on_search callbacks take ~10s to populate quotes (vs instant mock).
+    for (let i = 0; i < 10; i++) {
+      quotes = await client.getFlexiQuotes(searchId);
+      if (quotes.length) break;
+      await sleep(2000);
+    }
+    if (!quotes.length) return null;
+    const chosen = quotes.find((q) => q.vehicleVariant === 'AUTO_RICKSHAW') ?? quotes[0];
+    console.log(`[flexi] chosen quote: variant=${chosen.vehicleVariant} fare=${chosen.estimatedFare} id=${chosen.quoteId}`);
+    return chosen;
+  }
+
+  /** The fare rate-card line for the current quote — the breakup breakdown, or a
+   *  neutral "from ₹X" fallback when a quote carries no rate-card, or undefined. */
+  private flexiFareLine(ctx: FlowContext): string | undefined {
+    const q = ctx.flexiQuote;
+    if (!q) return undefined;
+    return buildFlexiFareLine(q.fareBreakup, ctx.language)
+      ?? (q.startingFare != null ? t(ctx.language).flexiFareFrom(q.startingFare) : undefined);
+  }
+
+  /** True if the stored quote can no longer be safely confirmed, so a confirm must
+   *  silently re-price rather than send a stale quoteId. Prefers the server's
+   *  `validTill`; falls back to an absolute age cap from capture so a quote that
+   *  carries no/garbage `validTill` still can't be confirmed hours later. */
+  private flexiQuoteStale(ctx: FlowContext): boolean {
+    const q = ctx.flexiQuote;
+    if (!q) return true;
+    const now = Date.now();
+    const expiry = q.validTill ? Date.parse(q.validTill) : NaN;
+    if (Number.isFinite(expiry)) return now >= expiry - 15000;
+    const captured = q.capturedAt ? Date.parse(q.capturedAt) : NaN;
+    if (Number.isFinite(captured)) return now - captured >= FLEXI_QUOTE_TTL_MS;
+    return false; // no validity info at all → trust the stored quote
   }
 
   /** Show the pickup confirmation (address + Confirm/Change buttons). When the
@@ -1030,24 +1110,29 @@ export class FlowEngine {
       || ctx.origin?.address?.area
       || (ctx.origin ? formatAddress(ctx.origin) : '')
       || 'your shared location';
-    const body = namedPlace ? s.flexiConfirmSavedPlace(namedPlace) : s.flexiConfirmPickup(label);
+    // Show the quote's fare rate-card (searched at pickup-share) so the rider
+    // agrees to a concrete fare before the ride is booked.
+    const fareLine = this.flexiFareLine(ctx);
+    const body = namedPlace ? s.flexiConfirmSavedPlace(namedPlace, fareLine) : s.flexiConfirmPickup(label, fareLine);
     await replyWithButtons(body, [
       [{ text: s.pickupConfirmButton, data: 'pickup_confirm' }],
       [{ text: s.pickupAdjustButton, data: 'pickup_adjust' }],
     ]);
   }
 
-  /** Run the metered (MeterRide) search once pickup is confirmed:
-   *  search (pickup-only) → quotes → confirm → poll for a driver → show the card. */
-  private async startFlexiSearch(
+  /** Book the metered (EasyBooking) ride once the rider confirms the priced pickup:
+   *  (silently re-price if the quote expired) → confirm → poll for a driver → card.
+   *  The quote was already searched at pickup-share (priceAndConfirmPickup). */
+  private async confirmFlexiBooking(
     ctx: FlowContext, msg: CommandMessage,
     reply: (txt: string) => Promise<void>,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
     connector: Connector,
   ) {
     const s = t(ctx.language);
-    if (!ctx.nyToken || !ctx.origin) {
-      await this.promptForPickup(ctx, msg, reply);
+    if (!ctx.nyToken || !ctx.origin || !ctx.flexiQuoteId) {
+      // Lost the priced quote (e.g. resumed session) → restart at pickup.
+      await this.promptForPickup(ctx, msg, reply, connector);
       return;
     }
     const client = new NammaYatriClient(ctx.nyToken);
@@ -1055,52 +1140,62 @@ export class FlowEngine {
     ctx.cancelRequested = false;
     await this.saveContext(msg, ctx);
 
-    const fare = this.flexiFareLine(ctx, msg);
-    await replyWithButtons(
-      fare ? `${s.flexiFinding}\n${fare}` : s.flexiFinding,
-      [[{ text: s.flexiCancelSearch, data: 'cancel' }]],
-    );
-
-    // Reference time captured BEFORE the search so the booking (created at confirm,
-    // seconds later on the server) always clears any createdAfter list filter, even
-    // with modest clock skew between us and NY.
+    // Reference time captured BEFORE booking so the booking (created seconds later
+    // on the server) always clears any createdAfter list filter, even with skew.
     const flowStartedAt = new Date();
     let bookingId: string | null = null;
     try {
-      const searchId = await client.searchFlexi(ctx.origin);
-      ctx.flexiSearchId = searchId;
-      let quotes: NYFlexiQuote[] = [];
-      // Real rental on_search callbacks take ~10s to populate quotes (vs instant mock).
-      for (let i = 0; i < 10; i++) {
-        quotes = await client.getFlexiQuotes(searchId);
-        if (quotes.length) break;
-        await sleep(2000);
+      // Silently re-price if the stored quote has expired (>5 min since share) so
+      // we never confirm a stale quoteId. The fare re-stated below is then fresh.
+      if (this.flexiQuoteStale(ctx)) {
+        const fresh = await this.searchFlexiQuote(client, ctx, msg);
+        if (!fresh) { await this.flexiNoAuto(ctx, msg, replyWithButtons); return; }
+        ctx.flexiQuoteId = fresh.quoteId;
+        ctx.flexiQuote = { fareBreakup: fresh.fareBreakup, startingFare: fresh.estimatedFare, validTill: fresh.validTill, capturedAt: new Date().toISOString() };
+        await this.saveContext(msg, ctx);
       }
-      if (!quotes.length) {
-        await this.flexiNoAuto(ctx, msg, replyWithButtons);
-        return;
-      }
-      const chosen = quotes.find((q) => q.vehicleVariant === 'AUTO_RICKSHAW') ?? quotes[0];
-      console.log(`[flexi] chosen quote: variant=${chosen.vehicleVariant} fare=${chosen.estimatedFare} id=${chosen.quoteId}`);
-      ctx.flexiQuoteId = chosen.quoteId;
-      await this.saveContext(msg, ctx);
-      bookingId = await client.confirmQuote(chosen.quoteId);
+      // "Finding an auto" — re-state the (possibly re-priced) true fare on one line.
+      const fareLine = this.flexiFareLine(ctx);
+      await replyWithButtons(
+        fareLine ? `${s.flexiFinding}\n${fareLine}` : s.flexiFinding,
+        [[{ text: s.flexiCancelSearch, data: 'cancel' }]],
+      );
+      bookingId = await client.confirmQuote(ctx.flexiQuoteId);
       if (!bookingId) {
         console.error('[flexi] confirmQuote returned no bookingId — cannot track the booking');
         await this.flexiNoAuto(ctx, msg, replyWithButtons);
         return;
       }
     } catch (err: any) {
-      console.error(`[flexi] search/confirm failed: ${err.message}`);
+      console.error(`[flexi] confirm failed: ${err.message}`);
+      // A 401 here means the silent-auth token expired. This local catch would
+      // otherwise swallow it before the top-level handler could react, leaving the
+      // rider looping on a dead token — so clear it so the next message re-auths.
+      if (err.message?.includes('401')) {
+        ctx.nyToken = undefined;
+        await this.tokenStore.delete(this.scopedUserKey(msg));
+        await this.saveContext(msg, ctx);
+      }
       await this.flexiNoAuto(ctx, msg, replyWithButtons);
       return;
     }
 
     // Re-read the context: a "Cancel search" tap can land during the blocking
-    // search/confirm above. Honor it rather than clobbering the flag with a
-    // stale write (which would leave a phantom booking after a cancel).
+    // confirm above. Honor it rather than clobbering the flag with a stale write.
     const afterConfirm = await this.getContext(msg);
-    if (afterConfirm.cancelRequested || afterConfirm.state === 'IDLE') return;
+    if (afterConfirm.cancelRequested || afterConfirm.state === 'IDLE') {
+      // The booking IS already live on the server (confirmQuote returned an id),
+      // but the rider cancelled while it was in flight — and handleCancel likely
+      // ran getActiveBookings before the booking was queryable, so it couldn't
+      // cancel it. Cancel it here so we never strand a dispatched driver on a ride
+      // the rider was told was cancelled. Best-effort (already cancelled → no-op).
+      if (bookingId) {
+        await client.cancelRide(bookingId).catch((e: any) => console.warn(`[flexi] phantom booking cancel failed: ${e?.message || e}`));
+        await this.rideRegistry.claimStage(bookingId, 'cancelled').catch(() => {});
+        await this.rideRegistry.remove(bookingId).catch(() => {});
+      }
+      return;
+    }
     afterConfirm.flexiSearchId = ctx.flexiSearchId;
     afterConfirm.flexiQuoteId = ctx.flexiQuoteId;
     afterConfirm.flexiBookingId = bookingId || undefined;
@@ -1134,7 +1229,7 @@ export class FlowEngine {
           ? await client.getBookingDetails(bookingId)
           : (await client.getActiveBookings()).find((x: any) => x.id === ctx.flexiBookingId);
         const ride = b?.rideList?.[0];
-        // Driver/vehicle/OTP populate on driver-ACCEPT for rentals (booking → TRIP_ASSIGNED).
+        // Driver/vehicle/OTP populate on driver-ACCEPT for EasyBooking (booking → TRIP_ASSIGNED).
         if (ride?.driverName || ride?.vehicleNumber || ride?.rideOtp) {
           foundBooking = b;
           freshCtx.activeBookingId = b.id;
@@ -1481,6 +1576,13 @@ export class FlowEngine {
   /** Extract MerchantConfig from message metadata (set by WhatsApp connector) */
   private getMerchantConfig(msg: CommandMessage): MerchantConfig | undefined {
     return msg.metadata?.merchantConfig as MerchantConfig | undefined;
+  }
+
+  /** Resolve the ride type for a shared pickup: the rider's explicit choice, else
+   *  regular for a regular-only merchant, else flexi. Single source of truth for
+   *  both the pickup-share (price?) and pickup-confirm (book vs ask-drop) branches. */
+  private resolveRideType(ctx: FlowContext, msg: CommandMessage): 'flexi' | 'regular' {
+    return ctx.rideType ?? (this.regularOffered(msg) && !this.flexiOffered(msg) ? 'regular' : 'flexi');
   }
 
   /** Merchant offers metered Flexi rides. */

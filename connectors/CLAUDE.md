@@ -35,8 +35,14 @@ block the webhook response (200 is sent immediately).
 
 ### Ride types
 
-- **Quick Ride** (internally `flexi`) — metered, pickup-only (NY RENTAL / MeterRide). Share a
-  pin → search → confirm → driver card → tracked to completion.
+- **Quick Ride** (internally `flexi`) — metered, destination-less, pickup-only, booked via NY's
+  **EasyBooking** product (`fareProductType: "EASY_BOOKING"`). Share a pin → **search + price**
+  (the confirm prompt states the quote's fare rate-card: base + per-km + night multiplier, from
+  the quote's `quoteFareBreakup`) → confirm → **book** (`confirmQuote`; the quote is silently
+  re-searched first if it has expired) → driver card → tracked to completion. The final fare is
+  computed from actual GPS distance. Driver-ended (no rider end-OTP). Search is quote-only and
+  dispatches NO driver — only `confirmQuote` does — so pricing on share is safe. See
+  `docs/easybooking.md`.
 - **Ride with destination** (internally `regular`) — pickup + drop → ONE_WAY estimate → upfront
   fare confirm → book → tracked.
 

@@ -37,6 +37,9 @@ export interface FlowContext {
   flexiSearchId?: string;
   flexiQuoteId?: string;
   flexiBookingId?: string;
+  // The chosen quote's fare metadata, captured at pickup-share so the confirm
+  // prompt + "finding" message can state it and so we can detect an expired quote.
+  flexiQuote?: { fareBreakup?: Record<string, number>; startingFare?: number; validTill?: string; capturedAt?: string };
   // Regular (friction-free one-way auto: pickup + drop → estimate → book)
   regularSearchId?: string;
   regularEstimateId?: string;

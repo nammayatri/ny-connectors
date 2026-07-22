@@ -147,7 +147,7 @@ export class MockNammaYatriClient extends NammaYatriClient {
     ];
   }
 
-  // --- Flexi (MeterRide) mock — pickup-only, no dispatch ---
+  // --- Flexi (EasyBooking) mock — destination-less, pickup-only, no dispatch ---
   async searchFlexi(_origin: NYPlaceDetails): Promise<string> {
     log('searchFlexi() -> mock-flexi-search-1');
     return 'mock-flexi-search-1';
@@ -155,7 +155,23 @@ export class MockNammaYatriClient extends NammaYatriClient {
 
   async getFlexiQuotes(_searchId: string): Promise<NYFlexiQuote[]> {
     log('getFlexiQuotes() -> 1 Auto quote');
-    return [{ quoteId: 'mock-flexi-quote-auto', serviceTierName: 'Auto', estimatedFare: 40, vehicleVariant: 'AUTO_RICKSHAW' }];
+    return [{
+      quoteId: 'mock-flexi-quote-auto',
+      serviceTierName: 'Auto',
+      estimatedFare: 40,
+      vehicleVariant: 'AUTO_RICKSHAW',
+      // Representative EasyBooking rate-card: base ₹40 (30 + 10 dead-km), ₹12/km,
+      // 1.5× between 10PM–5AM (79200s / 18000s). Renders the pre-booking fare line.
+      fareBreakup: {
+        BASE_FARE: 30,
+        DEAD_KILOMETER_FARE: 10,
+        EXTRA_PER_KM_FARE: 12,
+        NIGHT_SHIFT_CHARGE: 1.5,
+        NIGHT_SHIFT_START_TIME_IN_SECONDS: 79200,
+        NIGHT_SHIFT_END_TIME_IN_SECONDS: 18000,
+      },
+      validTill: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    }];
   }
 
   async confirmQuote(quoteId: string): Promise<string> {
@@ -220,13 +236,13 @@ export class MockNammaYatriClient extends NammaYatriClient {
     if (elapsed >= 20) {
       bookingStatus = 'COMPLETED';
       ride = {
-        ...driver, status: 'COMPLETED', endOtp: '8765',
+        ...driver, status: 'COMPLETED',
         driverArrivalTime: arrivalTime, rideStartTime: startTime,
         rideEndTime: new Date(first + 20000).toISOString(),
         computedPrice: 57, chargeableRideDistance: 4200,
       };
     } else if (elapsed >= 12) {
-      ride = { ...driver, status: 'INPROGRESS', endOtp: '8765', driverArrivalTime: arrivalTime, rideStartTime: startTime };
+      ride = { ...driver, status: 'INPROGRESS', driverArrivalTime: arrivalTime, rideStartTime: startTime };
     } else if (elapsed >= 6) {
       ride = { ...driver, status: 'NEW', driverArrivalTime: arrivalTime };
     } else {

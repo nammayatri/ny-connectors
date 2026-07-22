@@ -82,9 +82,19 @@ export const en: LanguageStrings = {
   // Flexi (location-only metered booking)
   welcome: "🙏 Namaskara! I'm your Namma Yatri assistant\n\nReady to book an auto?",
   flexiSharePrompt: 'Where should the driver pick you up? 📍',
-  flexiFareRate: (base: number, perKm: number) => `🛺 Metered auto · from ₹${base} + ₹${perKm}/km`,
-  flexiConfirmPickup: (address: string) => `📍 Your location: near *${address}*.\n\nShall we go ahead?`,
-  flexiConfirmSavedPlace: (name: string) => `📍 You shared a saved place:\n *${name}*.\nShall we go ahead?.`,
+  flexiPricing: '📍 Getting your fare…',
+  flexiFareBreakup: (base?: number, perKm?: number, nightMult?: number, nightWindow?: string) => {
+    const fare = base != null && perKm != null ? `₹${base} + ₹${perKm}/km`
+      : base != null ? `₹${base}`
+      : perKm != null ? `₹${perKm}/km` : '';
+    const night = nightMult != null && nightWindow ? ` · ${nightWindow}: ${nightMult}× fare` : '';
+    return `🛺 ${fare}${night}`;
+  },
+  flexiFareFrom: (amount: number) => `🛺 From ₹${amount}`,
+  flexiConfirmPickup: (address: string, fareLine?: string) =>
+    `📍 Your location: near *${address}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nShall we go ahead?`,
+  flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
+    `📍 You shared a saved place:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\nShall we go ahead?.`,
   pickupConfirmButton: '✅ Confirm pickup',
   pickupAdjustButton: '✏️ Change location',
   flexiFinding: '🛺 Finding an auto near you…',
@@ -102,19 +112,12 @@ export const en: LanguageStrings = {
   flexiArrived: (otp: string) => otp
     ? `🛺 Your auto has arrived!\nShare OTP with the driver to start.\n\n🔑 OTP: *${otp}* `
     : '🛺 Your auto has arrived!\nPlease meet your driver at the pickup point.',
-  flexiRideStarted: "🚦 Ride started! Enjoy the ride.\n\nReached your destination? Tap *End ride* below",
   flexiFareFinal: (amount: number, km?: number) =>
     km != null ? `💰 Total fare: *₹${amount}* · ${km} km` : `💰 Total fare: *₹${amount}*`,
   flexiFareUnavailable: '💰 Your fare will be confirmed shortly.',
   flexiRideEnded: (fareLine: string) => `🎉 Ride complete!\n\n${fareLine}\n\n🙏 Thank you for riding with Namma Yatri.`,
   flexiRideCancelled: '❌ Your ride was cancelled.\n\nNeed to go somewhere? Book another auto anytime.',
   flexiBookAnother: '🛺 Book another',
-  // Flexi end-ride OTP (rental)
-  flexiEndRideButton: '🏁 End ride',
-  flexiEndOtpShare: (otp: string) => `🏁 End OTP: *${otp}*\n\nShare this with your driver when you reach your destination.`,
-  flexiEndOtpNotReady: "⏳ Your ride hasn't started yet. You'll get the end OTP once you're on your way.",
-  flexiEndOtpFetchError: "⚠️ Couldn't fetch your ride just now. Tap *End ride* again in a moment.",
-  flexiRideAlreadyEnded: '✅ This ride has already ended.',
   // Flexi "hi" menu — More drawer + how-it-works + support
   moreButton: '⚙️ More options',
   moreTitle: 'What would you like to do?',

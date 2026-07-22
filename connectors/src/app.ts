@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { WhatsAppConnector } from './connectors';
 import { Connector } from './connectors/types';
-import { createSessionManager, createTokenStore, createRideRegistry } from './session';
+import { createSessionManager, createTokenStore, createRideRegistry, createMessageDedup } from './session';
 import { FlowEngine } from './flow';
 import { RideTracker } from './tracking/ride-tracker';
 import { config, getAllMerchants } from './config';
@@ -10,7 +10,8 @@ const app = express();
 const sessionManager = createSessionManager();
 const tokenStore = createTokenStore();
 const rideRegistry = createRideRegistry();
-const flowEngine = new FlowEngine(sessionManager as any, tokenStore, rideRegistry);
+const messageDedup = createMessageDedup();
+const flowEngine = new FlowEngine(sessionManager as any, tokenStore, rideRegistry, messageDedup);
 
 // Capture raw body for signature verification
 app.use(express.json({
@@ -100,6 +101,7 @@ const shutdown = async () => {
   await sessionManager.disconnect();
   await tokenStore.disconnect();
   await rideRegistry.disconnect();
+  await messageDedup.disconnect();
 };
 
 export { app, shutdown };

@@ -80,9 +80,19 @@ export const te: LanguageStrings = {
   // Flexi (location-only metered booking)
   welcome: '🙏 నమస్కారం! నేను మీ Namma Yatri అసిస్టెంట్\n\nఆటో బుక్ చేయడానికి సిద్ధంగా ఉన్నారా?',
   flexiSharePrompt: 'డ్రైవర్ మిమ్మల్ని ఎక్కడ నుండి తీసుకెళ్లాలి? 📍',
-  flexiFareRate: (base: number, perKm: number) => `🛺 మీటర్ ఆటో · ₹${base} + ₹${perKm}/కిమీ నుండి`,
-  flexiConfirmPickup: (address: string) => `📍 మీ లొకేషన్: *${address}* దగ్గర.\n\nకొనసాగించాలా?`,
-  flexiConfirmSavedPlace: (name: string) => `📍 మీరు సేవ్ చేసిన స్థలాన్ని పంపారు:\n *${name}*.\nకొనసాగించాలా?`,
+  flexiPricing: '📍 మీ ఛార్జీని పొందుతున్నాము…',
+  flexiFareBreakup: (base?: number, perKm?: number, nightMult?: number, nightWindow?: string) => {
+    const fare = base != null && perKm != null ? `₹${base} + ₹${perKm}/కిమీ`
+      : base != null ? `₹${base}`
+      : perKm != null ? `₹${perKm}/కిమీ` : '';
+    const night = nightMult != null && nightWindow ? ` · ${nightWindow}: ${nightMult}× ఛార్జీ` : '';
+    return `🛺 ${fare}${night}`;
+  },
+  flexiFareFrom: (amount: number) => `🛺 ₹${amount} నుండి`,
+  flexiConfirmPickup: (address: string, fareLine?: string) =>
+    `📍 మీ లొకేషన్: *${address}* దగ్గర.${fareLine ? `\n\n${fareLine}` : ''}\n\nకొనసాగించాలా?`,
+  flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
+    `📍 మీరు సేవ్ చేసిన స్థలాన్ని పంపారు:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\nకొనసాగించాలా?`,
   pickupConfirmButton: '✅ పికప్ నిర్ధారించండి',
   pickupAdjustButton: '✏️ స్థలం మార్చు',
   flexiFinding: '🛺 మీ దగ్గర ఆటో వెతుకుతున్నాము…',
@@ -101,7 +111,6 @@ export const te: LanguageStrings = {
   flexiArrived: (otp: string) => otp
     ? `🛺 మీ ఆటో వచ్చేసింది!\nరైడ్ ప్రారంభించడానికి డ్రైవర్‌కు OTP చెప్పండి.\n\n🔑 OTP: *${otp}* `
     : '🛺 మీ ఆటో వచ్చేసింది!\nదయచేసి పికప్ పాయింట్ వద్ద మీ డ్రైవర్‌ను కలవండి.',
-  flexiRideStarted: "🚦 రైడ్ ప్రారంభమైంది! ప్రయాణాన్ని ఆస్వాదించండి.\n\nమీ గమ్యస్థానానికి చేరుకున్నారా? క్రింద *రైడ్ ముగించండి* నొక్కండి",
   flexiFareFinal: (amount: number, km?: number) =>
     km != null ? `💰 మొత్తం ఛార్జీ: *₹${amount}* · ${km} కిమీ` : `💰 మొత్తం ఛార్జీ: *₹${amount}*`,
   flexiFareUnavailable: '💰 మీ ఛార్జీ త్వరలో నిర్ధారించబడుతుంది.',
@@ -109,12 +118,6 @@ export const te: LanguageStrings = {
   flexiRideCancelled: '❌ మీ రైడ్ రద్దు చేయబడింది.\n\nఎక్కడికైనా వెళ్లాలా? ఎప్పుడైనా మరో ఆటో బుక్ చేయండి.',
   flexiBookAnother: '🛺 మరొకటి బుక్ చేయండి',
 
-  // Flexi end-ride OTP (rental)
-  flexiEndRideButton: '🏁 రైడ్ ముగించండి',
-  flexiEndOtpShare: (otp: string) => `🏁 ముగింపు OTP: *${otp}*\n\nమీరు మీ గమ్యస్థానానికి చేరుకున్నప్పుడు దీన్ని మీ డ్రైవర్‌కు చెప్పండి.`,
-  flexiEndOtpNotReady: "⏳ మీ రైడ్ ఇంకా ప్రారంభం కాలేదు. మీరు బయలుదేరిన వెంటనే మీకు ముగింపు OTP వస్తుంది.",
-  flexiEndOtpFetchError: "⚠️ ప్రస్తుతం మీ రైడ్‌ను పొందలేకపోయాం. కొద్దిసేపటి తర్వాత మళ్లీ *రైడ్ ముగించండి* నొక్కండి.",
-  flexiRideAlreadyEnded: '✅ ఈ రైడ్ ఇప్పటికే ముగిసింది.',
 
   // Flexi "hi" మెను — More డ్రాయర్ + ఇది ఎలా పనిచేస్తుంది + మద్దతు
   moreButton: '⚙️ మరిన్ని ఎంపికలు',
