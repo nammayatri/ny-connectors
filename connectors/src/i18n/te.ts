@@ -80,43 +80,43 @@ export const te: LanguageStrings = {
   // Flexi (location-only metered booking)
   welcome: '🙏 నమస్కారం! నేను మీ Namma Yatri అసిస్టెంట్\n\nఆటో బుక్ చేయడానికి సిద్ధంగా ఉన్నారా?',
   flexiSharePrompt: 'డ్రైవర్ మిమ్మల్ని ఎక్కడ నుండి తీసుకెళ్లాలి? 📍',
-  flexiPricing: '📍 మీ ఛార్జీని పొందుతున్నాము…',
   flexiFareBreakup: (base?: number, perKm?: number, nightMult?: number, nightWindow?: string) => {
-    const fare = base != null && perKm != null ? `₹${base} + ₹${perKm}/కిమీ`
-      : base != null ? `₹${base}`
-      : perKm != null ? `₹${perKm}/కిమీ` : '';
-    const night = nightMult != null && nightWindow ? ` · ${nightWindow}: ${nightMult}× ఛార్జీ` : '';
-    return `🛺 ${fare}${night}`;
+    const lines: string[] = [];
+    if (base != null) lines.push(`మొదటి 2 కిమీ: ₹${base}`);
+    if (perKm != null) lines.push(`అదనం: ₹${perKm}/కిమీ`);
+    if (nightMult != null && nightWindow) lines.push(`🌙 రాత్రి (${nightWindow}): ${nightMult}× ఛార్జీ`);
+    return lines.join('\n');
   },
   flexiFareFrom: (amount: number) => `🛺 ₹${amount} నుండి`,
   flexiConfirmPickup: (address: string, fareLine?: string) =>
-    `📍 మీ లొకేషన్: *${address}* దగ్గర.${fareLine ? `\n\n${fareLine}` : ''}\n\nకొనసాగించాలా?`,
+    `📍 మీ లొకేషన్: *${address}* దగ్గర.${fareLine ? `\n\n${fareLine}` : ''}\n\nరైడ్ తర్వాత డ్రైవర్‌కు నగదు/UPI చెల్లించండి.\nబుక్ చేయాలా?`,
   flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
-    `📍 మీరు సేవ్ చేసిన స్థలాన్ని పంపారు:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\nకొనసాగించాలా?`,
+    `📍 మీరు సేవ్ చేసిన స్థలాన్ని పంపారు:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nరైడ్ తర్వాత డ్రైవర్‌కు నగదు/UPI చెల్లించండి.\nబుక్ చేయాలా?`,
   pickupConfirmButton: '✅ పికప్ నిర్ధారించండి',
   pickupAdjustButton: '✏️ స్థలం మార్చు',
-  flexiFinding: '🛺 మీ దగ్గర ఆటో వెతుకుతున్నాము…',
-  flexiStillFinding: (elapsed: number) => `⏳ ఇంకా మీ దగ్గర ఆటో వెతుకుతున్నాము… (${elapsed} సె)\n\nఆపడానికి "cancel" పంపండి.`,
+  flexiFinding: '🛺 మీ దగ్గర ఆటో వెతుకుతున్నాము. 1 నిమిషం వేచి ఉండండి. WhatsApp మూసివేయవద్దు.',
+  flexiStillFinding: '⏳ ఇంకా మీ దగ్గర ఆటో వెతుకుతున్నాము…\n\nఆపడానికి "cancel" పంపండి.',
   flexiCancelSearch: '❌ శోధన ఆపు',
   flexiFoundDriver: (name: string) => `🛺 *${name}* వస్తున్నారు.`,
   flexiDriverMeta: (rating: number, etaMin: number) => `⭐ ${rating} · ${etaMin} నిమిషాల దూరంలో`,
   flexiOtpShare: (otp: string) => `🔑 స్టార్ట్ OTP: *${otp}*`,
   flexiCallDriver: (phone: string) => `📞 డ్రైవర్‌కు కాల్ చేయండి: ${phone}`,
   flexiSafetyNote: 'డ్రైవర్‌తో మీ గమ్యస్థానాన్ని నిర్ధారించుకోండి.',
-  flexiNoAuto: '😔 ప్రస్తుతం మీ దగ్గర ఆటో అందుబాటులో లేదు. దయచేసి మళ్లీ ప్రయత్నించండి.',
+  flexiNoAuto: '😔 ప్రస్తుతం ఖాళీ ఆటో లేదు. 2 నిమిషాల తర్వాత మళ్లీ ప్రయత్నించండి.',
   flexiTryAgain: '🔁 మళ్లీ ప్రయత్నించండి',
   flexiOutOfArea: (area: string) => `📍 ఈ ప్రదేశం మా సేవా ప్రాంతం వెలుపల ఉంది.\n\nNamma Yatri ఆటోలు ప్రస్తుతం *${area}* లో అందుబాటులో ఉన్నాయి. అక్కడి నుండి పికప్ ప్రయత్నించండి, లేదా కొద్దిసేపటి తర్వాత చూడండి.`,
 
   // Flexi ride-progress updates (pushed by the background tracker)
   flexiArrived: (otp: string) => otp
-    ? `🛺 మీ ఆటో వచ్చేసింది!\nరైడ్ ప్రారంభించడానికి డ్రైవర్‌కు OTP చెప్పండి.\n\n🔑 OTP: *${otp}* `
-    : '🛺 మీ ఆటో వచ్చేసింది!\nదయచేసి పికప్ పాయింట్ వద్ద మీ డ్రైవర్‌ను కలవండి.',
-  flexiFareFinal: (amount: number, km?: number) =>
-    km != null ? `💰 మొత్తం ఛార్జీ: *₹${amount}* · ${km} కిమీ` : `💰 మొత్తం ఛార్జీ: *₹${amount}*`,
+    ? `🛺 డ్రైవర్ వచ్చారు! డ్రైవర్‌కు స్టార్ట్ OTP చెప్పండి.\n\n🔑 OTP: ${otp}`
+    : '🛺 డ్రైవర్ వచ్చారు! దయచేసి పికప్ పాయింట్ వద్ద మీ డ్రైవర్‌ను కలవండి.',
   flexiFareUnavailable: '💰 మీ ఛార్జీ త్వరలో నిర్ధారించబడుతుంది.',
-  flexiRideEnded: (fareLine: string) => `🎉 రైడ్ పూర్తయింది!\n\n${fareLine}\n\n🙏 Namma Yatri తో ప్రయాణించినందుకు ధన్యవాదాలు.`,
+  flexiRideFinishedHeader: '🎉 రైడ్ పూర్తయింది.',
+  flexiPayDriver: (amount: number) => `💰 డ్రైవర్‌కు ₹${amount} నగదు/UPI ఇవ్వండి`,
+  flexiDistanceLine: (km: number) => `📏 ${km} కిమీ`,
   flexiRideCancelled: '❌ మీ రైడ్ రద్దు చేయబడింది.\n\nఎక్కడికైనా వెళ్లాలా? ఎప్పుడైనా మరో ఆటో బుక్ చేయండి.',
   flexiBookAnother: '🛺 మరొకటి బుక్ చేయండి',
+  appDownloadNudge: '🙏 Namma Yatri app డౌన్‌లోడ్ చేయండి!\nhttps://play.google.com/store/apps/details?id=in.juspay.nammayatri',
 
 
   // Flexi "hi" మెను — More డ్రాయర్ + ఇది ఎలా పనిచేస్తుంది + మద్దతు

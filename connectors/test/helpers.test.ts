@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { detectLanguage } from '../src/i18n';
 import { isWithinServiceArea, cityCenterByName, haversineKm, findNearestCity } from '../src/ny/cities';
 import { formatDialable, classifyStage, buildStarted, buildFlexiFareLine } from '../src/flow/flexi-messages';
@@ -77,10 +77,10 @@ describe('flexi-messages helpers', () => {
     expect(classifyStage({ rideList: [] })).toBe('none');
   });
 
-  it('buildStarted is a plain message with no button (EasyBooking / ONE_WAY are driver-ended)', () => {
-    expect(buildStarted({ id: 'b1', rideList: [{}] }).buttons).toBeUndefined();
-    // Even if a stray endOtp appears on the booking, no End-ride button is offered.
-    expect(buildStarted({ id: 'b1', rideList: [{ endOtp: '8765' }] }).buttons).toBeUndefined();
+  it('buildStarted carries an SOS button (safety) but no End-ride button — EasyBooking / ONE_WAY are driver-ended', () => {
+    expect(buildStarted({ id: 'b1', rideList: [{}] }).buttons).toEqual([[{ text: en.sosButton, data: 'sos_confirm' }]]);
+    // Even if a stray endOtp appears on the booking, still no End-ride button is offered.
+    expect(buildStarted({ id: 'b1', rideList: [{ endOtp: '8765' }] }).buttons?.flat().some((b) => b.data === 'flexi_end_otp')).toBe(false);
   });
 });
 
@@ -118,19 +118,30 @@ describe('buildFlexiFareLine (fare rate-card display)', () => {
     NIGHT_SHIFT_END_TIME_IN_SECONDS: 18000,   // 05:00 = 5AM
   };
 
-  it('renders base(+deadKm) + per-km + night window from the breakup', () => {
-    expect(buildFlexiFareLine(FULL, 'en')).toBe('🛺 ₹46 + ₹28/km · 10PM–5AM: 1.5× fare');
+  // The night line is gated on the CURRENT IST clock, so pin the time deterministically.
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('renders base(+deadKm) + per-km, plus the night line when IST is inside the window', () => {
+    vi.setSystemTime(new Date('2026-07-09T17:30:00.000Z')); // 23:00 IST → inside 10PM–5AM
+    expect(buildFlexiFareLine(FULL, 'en')).toBe('First 2km: ₹46\nExtra: ₹28/km\n🌙 Night (10PM–5AM): 1.5× fare');
   });
 
-  it('omits the night clause when night fields are absent', () => {
+  it('omits the night line in daytime even when the night fields are present', () => {
+    vi.setSystemTime(new Date('2026-07-09T06:30:00.000Z')); // 12:00 IST → outside the window
+    expect(buildFlexiFareLine(FULL, 'en')).toBe('First 2km: ₹46\nExtra: ₹28/km');
+  });
+
+  it('omits the night line when the night fields are absent', () => {
+    vi.setSystemTime(new Date('2026-07-09T17:30:00.000Z')); // even at night, no fields → no line
     const { NIGHT_SHIFT_CHARGE, NIGHT_SHIFT_START_TIME_IN_SECONDS, NIGHT_SHIFT_END_TIME_IN_SECONDS, ...noNight } = FULL;
-    expect(buildFlexiFareLine(noNight, 'en')).toBe('🛺 ₹46 + ₹28/km');
+    expect(buildFlexiFareLine(noNight, 'en')).toBe('First 2km: ₹46\nExtra: ₹28/km');
   });
 
   it('rounds the base sum so paise fares never render IEEE float garbage', () => {
     // 46.1 + 3.2 === 49.300000000000004 in IEEE-754 — must render ₹49.3, not garbage.
     expect(buildFlexiFareLine({ BASE_FARE: 46.1, DEAD_KILOMETER_FARE: 3.2, EXTRA_PER_KM_FARE: 12 }, 'en'))
-      .toBe('🛺 ₹49.3 + ₹12/km');
+      .toBe('First 2km: ₹49.3\nExtra: ₹12/km');
   });
 
   it('returns undefined when there is no base and no per-km rate to show', () => {

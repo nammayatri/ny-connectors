@@ -43,7 +43,7 @@ block the webhook response (200 is sent immediately).
   computed from actual GPS distance. Driver-ended (no rider end-OTP). Search is quote-only and
   dispatches NO driver — only `confirmQuote` does — so pricing on share is safe. See
   `docs/easybooking.md`.
-- **Ride with destination** (internally `regular`) — pickup + drop → ONE_WAY estimate → upfront
+- **Ride with drop** (internally `regular`) — pickup + drop → ONE_WAY estimate → upfront
   fare confirm → book → tracked.
 
 Per-merchant `RIDE_MODE` (`flexi`|`regular`|`both`) sets which are offered. A merchant offering

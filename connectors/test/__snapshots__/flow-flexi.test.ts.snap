@@ -13,7 +13,7 @@ exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pu
 exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 2-pickup-confirm 1`] = `
 [
   {
-    "kind": "text",
+    "kind": "typing",
     "merchant": "FLEXI",
     "to": "919361176218",
   },
@@ -63,7 +63,10 @@ exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pu
 exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pushes arrived → started → ended > 5-started 1`] = `
 [
   {
-    "kind": "text",
+    "buttons": [
+      "sos_confirm",
+    ],
+    "kind": "buttons",
     "merchant": "FLEXI",
     "to": "919361176218",
   },
@@ -92,9 +95,10 @@ exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pu
     "to": "919361176218",
   },
   {
-    "kind": "text",
+    "kind": "typing",
     "merchant": "FLEXI",
-    "text": "📍 Getting your fare…",
+    "messageId": "m2",
+    "text": "",
     "to": "919361176218",
   },
   {
@@ -112,9 +116,11 @@ exports[`flexi (Quick Ride) book + track lifecycle > books a metered ride and pu
     "merchant": "FLEXI",
     "text": "📍 Your location: near *Shared pin location*.
 
-🛺 ₹40 + ₹12/km · 10PM–5AM: 1.5× fare
+First 2km: ₹40
+Extra: ₹12/km
 
-Shall we go ahead?",
+Cash/UPI to the driver after the ride.
+Shall we book?",
     "to": "919361176218",
   },
   {
@@ -126,8 +132,10 @@ Shall we go ahead?",
     ],
     "kind": "buttons",
     "merchant": "FLEXI",
-    "text": "🛺 Finding an auto near you…
-🛺 ₹40 + ₹12/km · 10PM–5AM: 1.5× fare",
+    "text": "🛺 Looking for an auto near you. Wait 1 minute. Don't close WhatsApp.
+
+First 2km: ₹40
+Extra: ₹12/km",
     "to": "919361176218",
   },
   {
@@ -153,14 +161,19 @@ Confirm your destination with the driver.",
   {
     "kind": "text",
     "merchant": "FLEXI",
-    "text": "🛺 Your auto has arrived!
-Share OTP with the driver to start.
+    "text": "🛺 Driver arrived! Tell the start OTP to the driver.
 
-🔑 OTP: *4321* ",
+🔑 OTP: 4321",
     "to": "919361176218",
   },
   {
-    "kind": "text",
+    "buttons": [
+      {
+        "data": "sos_confirm",
+        "text": "🚨 SOS",
+      },
+    ],
+    "kind": "buttons",
     "merchant": "FLEXI",
     "text": "🚦 Your ride has started. Enjoy the trip!",
     "to": "919361176218",
@@ -174,11 +187,12 @@ Share OTP with the driver to start.
     ],
     "kind": "buttons",
     "merchant": "FLEXI",
-    "text": "🎉 Ride complete!
+    "text": "🎉 Ride finished.
+💰 Give the driver ₹57 cash/UPI
+📏 4.2 km
 
-💰 Total fare: *₹57* · 4.2 km
-
-🙏 Thank you for riding with Namma Yatri.",
+🙏 Download the Namma Yatri app!
+https://play.google.com/store/apps/details?id=in.juspay.nammayatri",
     "to": "919361176218",
   },
 ]

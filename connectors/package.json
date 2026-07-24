@@ -1,5 +1,5 @@
 {
-  "name": "message-gateway",
+  "name": "ny-connectors",
   "version": "1.0.0",
   "description": "WhatsApp ride-booking gateway for Namma Yatri (Quick Ride + Ride with destination)",
   "main": "dist/index.js",

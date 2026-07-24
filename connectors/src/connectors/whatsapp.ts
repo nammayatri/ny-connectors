@@ -201,6 +201,21 @@ export class WhatsAppConnector implements Connector {
     }, merchant);
   }
 
+  // Show a "typing…" indicator in reply to the rider's inbound message (its wamid).
+  // WhatsApp holds it for ≤25s or until the next message is sent; re-fire to extend.
+  // Also marks that message as read. Best-effort — never throws. `chatId` is unused
+  // by the API (the wamid identifies the conversation) but kept for call symmetry.
+  async sendTypingIndicator(_chatId: string, inboundMessageId: string, merchant?: MerchantConfig): Promise<void> {
+    if (!inboundMessageId) return;
+    const ok = await this.sendWhatsApp(_chatId, {
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: inboundMessageId,
+      typing_indicator: { type: 'text' },
+    }, merchant);
+    if (!ok) console.warn(`[whatsapp] typing indicator REJECTED for message_id=${inboundMessageId}`);
+  }
+
   // Returns true if WhatsApp accepted the message. Callers that need to retry
   // (the background ride tracker) rely on this; interactive-flow callers can
   // ignore it. Never throws — a network/API failure resolves to false.

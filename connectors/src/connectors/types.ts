@@ -35,4 +35,7 @@ export interface Connector {
   ): Promise<boolean>;
   sendLocationRequest(chatId: string, text: string, merchant?: MerchantConfig): Promise<boolean>;
   sendVideo(chatId: string, link: string, caption?: string, merchant?: MerchantConfig): Promise<boolean>;
+  // Best-effort "typing…" indicator shown in reply to an inbound message (its id),
+  // for up to 25s (re-fire to extend). Signals aliveness during a wait; never throws.
+  sendTypingIndicator(chatId: string, inboundMessageId: string, merchant?: MerchantConfig): Promise<void>;
 }

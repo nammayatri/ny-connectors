@@ -91,11 +91,13 @@ export class RideTracker {
 
   private async processRide(entry: ActiveRide): Promise<void> {
     const auth = await this.tokenStore.get(entry.userKey);
-    // Fall back to the fixed test token when the store has none: NY_FIXED_USER_TOKEN
-    // injects the session token into the engine, not the token store, so the tracker
-    // would otherwise never poll and ride-status pushes would silently stop. Refused
-    // in prod (see config.ts), so this fallback has no production effect.
-    const nyToken = auth?.nyToken ?? config.nyFixedUserToken;
+    // In NY_FIXED_USER_TOKEN test mode the engine routes EVERY booking through the
+    // fixed token (ignoring the store), so the tracker MUST use it too — otherwise
+    // a stale/wrong-env token left in the store (e.g. a pilot token in Redis from an
+    // earlier run) gets used and 401s. So the fixed token takes precedence when set;
+    // otherwise fall back to the stored per-user token. Refused in prod (see
+    // config.ts) → in production nyFixedUserToken is undefined and this is a no-op.
+    const nyToken = config.nyFixedUserToken ?? auth?.nyToken;
     if (!nyToken) {
       // Can't poll without a token (logged out / expired). Leave the entry for
       // max-age cleanup rather than dropping it on a transient miss.

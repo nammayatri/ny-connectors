@@ -1,10 +1,21 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: message-gateway-config
+  name: ny-connectors-config
 data:
   PORT: "3000"
+  # Enables the production safety guards in the app (fail-closed webhook verify,
+  # NY_MOCK refused, Redis required, PII body-logging off by default).
+  NODE_ENV: "production"
   # Non-secret runtime config. Secrets (WhatsApp + NY credentials) live in the
-  # message-gateway-secrets Secret, not here.
+  # ny-connectors-secrets Secret, not here.
   RIDE_MODE: "both"
   NY_BASE_URL: "https://api.moving.tech/pilot/app/v2"
+  # Redis is REQUIRED in production: the Deployment runs 2 replicas + a durable
+  # ride tracker, so session/token/ride-registry state must be shared. Points at
+  # the in-cluster Redis (k8s/redis.yaml); swap for a managed Redis URL if you
+  # have one.
+  REDIS_URL: "redis://ny-connectors-redis:6379"
+  # Do not log NY request/response bodies (driver name/phone, OTP, fare) in prod.
+  # (NODE_ENV=production already defaults this off; set explicitly for clarity.)
+  NY_LOG_BODIES: "0"

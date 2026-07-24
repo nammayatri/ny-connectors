@@ -82,43 +82,43 @@ export const hi: LanguageStrings = {
   // Flexi (location-only metered booking)
   welcome: '🙏 नमस्ते! मैं आपका Namma Yatri सहायक हूँ\n\nऑटो बुक करने के लिए तैयार हैं?',
   flexiSharePrompt: 'ड्राइवर आपको कहाँ से लेगा? 📍',
-  flexiPricing: '📍 आपका किराया देख रहे हैं…',
   flexiFareBreakup: (base?: number, perKm?: number, nightMult?: number, nightWindow?: string) => {
-    const fare = base != null && perKm != null ? `₹${base} + ₹${perKm}/किमी`
-      : base != null ? `₹${base}`
-      : perKm != null ? `₹${perKm}/किमी` : '';
-    const night = nightMult != null && nightWindow ? ` · ${nightWindow}: ${nightMult}× किराया` : '';
-    return `🛺 ${fare}${night}`;
+    const lines: string[] = [];
+    if (base != null) lines.push(`पहले 2 किमी: ₹${base}`);
+    if (perKm != null) lines.push(`अतिरिक्त: ₹${perKm}/किमी`);
+    if (nightMult != null && nightWindow) lines.push(`🌙 रात (${nightWindow}): ${nightMult}× किराया`);
+    return lines.join('\n');
   },
   flexiFareFrom: (amount: number) => `🛺 ₹${amount} से`,
   flexiConfirmPickup: (address: string, fareLine?: string) =>
-    `📍 आपकी लोकेशन: *${address}* के पास।${fareLine ? `\n\n${fareLine}` : ''}\n\nआगे बढ़ें?`,
+    `📍 आपकी लोकेशन: *${address}* के पास।${fareLine ? `\n\n${fareLine}` : ''}\n\nराइड के बाद ड्राइवर को नकद/UPI दें।\nबुक करें?`,
   flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
-    `📍 आपने एक सेव की गई जगह भेजी:\n *${name}*।${fareLine ? `\n\n${fareLine}` : ''}\nआगे बढ़ें?`,
+    `📍 आपने एक सेव की गई जगह भेजी:\n *${name}*।${fareLine ? `\n\n${fareLine}` : ''}\n\nराइड के बाद ड्राइवर को नकद/UPI दें।\nबुक करें?`,
   pickupConfirmButton: '✅ पिकअप कन्फर्म करें',
   pickupAdjustButton: '✏️ जगह बदलें',
-  flexiFinding: '🛺 आपके पास ऑटो ढूँढ रहे हैं…',
-  flexiStillFinding: (elapsed: number) => `⏳ अभी भी आपके पास ऑटो ढूँढ रहे हैं… (${elapsed} सेकंड)\n\nरोकने के लिए "cancel" भेजें।`,
+  flexiFinding: '🛺 आपके पास ऑटो ढूँढ रहे हैं। 1 मिनट रुकें। WhatsApp बंद न करें।',
+  flexiStillFinding: '⏳ अभी भी आपके पास ऑटो ढूँढ रहे हैं…\n\nरोकने के लिए "cancel" भेजें।',
   flexiCancelSearch: '❌ खोज रोकें',
   flexiFoundDriver: (name: string) => `🛺 *${name}* आ रहे हैं।`,
   flexiDriverMeta: (rating: number, etaMin: number) => `⭐ ${rating} · ${etaMin} मिनट दूर`,
   flexiOtpShare: (otp: string) => `🔑 स्टार्ट OTP: *${otp}*`,
   flexiCallDriver: (phone: string) => `📞 ड्राइवर को कॉल करें: ${phone}`,
   flexiSafetyNote: 'ड्राइवर के साथ अपना गंतव्य पक्का कर लें।',
-  flexiNoAuto: '😔 अभी आपके पास कोई ऑटो उपलब्ध नहीं है। कृपया फिर कोशिश करें।',
+  flexiNoAuto: '😔 अभी कोई खाली ऑटो नहीं है। 2 मिनट बाद फिर कोशिश करें।',
   flexiTryAgain: '🔁 फिर कोशिश करें',
   flexiOutOfArea: (area: string) => `📍 यह जगह हमारी सेवा क्षेत्र से बाहर लगती है।\n\nNamma Yatri ऑटो फ़िलहाल *${area}* में उपलब्ध हैं। वहाँ से पिकअप आज़माएँ, या कुछ समय बाद देखें।`,
 
   // Flexi ride-progress updates (pushed by the background tracker)
   flexiArrived: (otp: string) => otp
-    ? `🛺 आपका ऑटो आ गया है!\nराइड शुरू करने के लिए ड्राइवर को OTP बताएँ।\n\n🔑 OTP: *${otp}* `
-    : '🛺 आपका ऑटो आ गया है!\nकृपया पिकअप पॉइंट पर अपने ड्राइवर से मिलें।',
-  flexiFareFinal: (amount: number, km?: number) =>
-    km != null ? `💰 कुल किराया: *₹${amount}* · ${km} किमी` : `💰 कुल किराया: *₹${amount}*`,
+    ? `🛺 ड्राइवर आ गया! ड्राइवर को स्टार्ट OTP बताएँ।\n\n🔑 OTP: ${otp}`
+    : '🛺 ड्राइवर आ गया! कृपया पिकअप पॉइंट पर अपने ड्राइवर से मिलें।',
   flexiFareUnavailable: '💰 आपका किराया जल्द ही पक्का हो जाएगा।',
-  flexiRideEnded: (fareLine: string) => `🎉 राइड पूरी हुई!\n\n${fareLine}\n\n🙏 Namma Yatri के साथ सफर करने के लिए धन्यवाद।`,
+  flexiRideFinishedHeader: '🎉 राइड पूरी हुई।',
+  flexiPayDriver: (amount: number) => `💰 ड्राइवर को ₹${amount} नकद/UPI दें`,
+  flexiDistanceLine: (km: number) => `📏 ${km} किमी`,
   flexiRideCancelled: '❌ आपकी राइड रद्द हो गई।\n\nकहीं जाना है? कभी भी दूसरा ऑटो बुक करें।',
   flexiBookAnother: '🛺 दूसरा बुक करें',
+  appDownloadNudge: '🙏 Namma Yatri ऐप डाउनलोड करें!\nhttps://play.google.com/store/apps/details?id=in.juspay.nammayatri',
 
 
   // Flexi "hi" मेनू — More ड्रॉअर + यह कैसे काम करता है + सहायता

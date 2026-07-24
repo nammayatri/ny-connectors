@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
-  makeWorld, seedAuth, send, makePin, World,
+  makeWorld, seedAuth, send, makePin, makeMessage, World,
   startWebhook, flushMicrotasks, sendWebhook, locationEnvelope, buttonEnvelope,
 } from './harness';
 import { MockNammaYatriClient } from '../src/ny/mock-client';
@@ -76,6 +76,32 @@ describe('flexi cancel/interleaving safety (serialized store)', () => {
     // The live booking is cancelled by the confirm handler → no stranded driver.
     expect(cancelSpy).toHaveBeenCalledWith('mock-booking-001');
     // And nothing is left registered for tracking.
+    expect(await w.registry.list()).toHaveLength(0);
+  });
+});
+
+describe('flexi Cancel-search actually cancels the booking', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('cancels + de-registers a booking that getActiveBookings does NOT return (EasyBooking, no driver)', async () => {
+    const w = makeWorld();
+    await seedAuth(w, FLEXI, USER);
+    await send(w, makePin(FLEXI, USER));                        // share → priced → confirm prompt
+    await send(w, makeMessage(FLEXI, USER, 'pickup_confirm'));  // book → registered for tracking
+    expect(await w.registry.list()).toHaveLength(1);
+
+    // EasyBooking with no driver yet is absent from listV2 — but getBookingDetails
+    // knows it. Without the direct-resolve fallback, Cancel would find nothing and
+    // only reset locally, leaving the server ride live + the tracker polling.
+    vi.spyOn(MockNammaYatriClient.prototype, 'getActiveBookings').mockResolvedValue([]);
+    vi.spyOn(MockNammaYatriClient.prototype, 'getBookingDetails')
+      .mockResolvedValue({ id: 'mock-booking-001', status: 'CONFIRMED', rideList: [] });
+    const cancelSpy = vi.spyOn(MockNammaYatriClient.prototype, 'cancelRide');
+
+    await send(w, makeMessage(FLEXI, USER, 'cancel'));
+
+    // The known booking is cancelled server-side AND removed from the tracker.
+    expect(cancelSpy).toHaveBeenCalledWith('mock-booking-001', 'CONFIRMED');
     expect(await w.registry.list()).toHaveLength(0);
   });
 });

@@ -16,10 +16,8 @@ export interface MerchantConfig {
   nyCity: string;
   nyTrackingUrl: string; // template with {rideId} placeholder
   rideMode?: RideMode;     // which ride types this merchant offers (undefined = neither → unsupported)
-  flexiEnabled: boolean;   // derived from rideMode: offers metered Flexi rides
+  flexiEnabled: boolean;   // derived from rideMode: offers metered Flexi (EasyBooking) rides
   regularEnabled: boolean; // derived from rideMode: offers destination Regular rides
-  flexiBaseFare?: number; // display-only metered tariff, ₹ base (shown to riders)
-  flexiPerKm?: number;    // display-only metered tariff, ₹ per km
   flexiServiceArea?: string;      // served-city name for the geofence (e.g. "Tumkur")
   flexiServiceRadiusKm?: number;  // serviceable radius around that city center (km)
   flexiIntroVideoUrl?: string;    // how-it-works video (unset → text placeholder)
@@ -28,6 +26,7 @@ export interface MerchantConfig {
 
 export interface Config {
   port: number;
+  isProd: boolean;                // NODE_ENV === 'production' — gates the prod-only safety guards
   whatsappVerifyToken: string;
   whatsappAppSecret: string;
   whatsappAccessToken: string;
@@ -35,6 +34,7 @@ export interface Config {
   whatsappSkipVerify: boolean;
   redisMode: RedisMode;
   redisUrl: string;
+  redisConfigured: boolean;       // REDIS_URL or REDIS_CLUSTER_NODES was explicitly set (opts into Redis)
   redisClusterNodes: { host: string; port: number }[];
   sessionTtlSeconds: number;
   nyBaseUrl: string;
@@ -46,18 +46,15 @@ export interface Config {
   nyDashboardMerchant: string;
   nyCity: string;
   nyMock: boolean;
+  nyFixedUserToken?: string;      // TEST ONLY: route every user through this fixed NY session token (skips silent auth + OTP). Refused in prod.
   nyLogBodies: boolean;           // log full NY request/response bodies (PII) — disable in prod
   nyLogPretty: boolean;           // pretty-print (indent + cap) NY bodies in logs — set 0 for single-line prod logs
   allowedPhones: string[];        // WhatsApp allowlist (normalized 10-digit); empty = open to all
   rideMode?: RideMode;
   flexiEnabled: boolean;
   regularEnabled: boolean;
-  flexiBaseFare?: number;
-  flexiPerKm?: number;
   flexiServiceArea?: string;
   flexiServiceRadiusKm?: number;
-  flexiRentalDistanceM: number;   // rental package distance sent to NY (meters)
-  flexiRentalDurationS: number;   // rental package duration sent to NY (seconds)
   flexiTrackEnabled: boolean;     // run the background ride-progress tracker
   flexiTrackPollMs: number;       // how often the tracker polls each active ride
   flexiTrackMaxAgeMs: number;     // stop watching a ride after this age (safety net)
@@ -117,20 +114,27 @@ function parseAllowedPhones(raw: string | undefined): string[] {
     .filter((p) => p.length === 10);
 }
 
+const IS_PROD = process.env.NODE_ENV === 'production';
+
 export const config: Config = {
   port: parseInt(process.env.PORT || '3000', 10),
+  isProd: IS_PROD,
   whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN || '',
   whatsappAppSecret: process.env.WHATSAPP_APP_SECRET || '',
   whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
   whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
   // Dev-only: skip inbound webhook signature verification (use if the app secret
-  // is uncertain while testing through a tunnel). NEVER enable in production.
-  whatsappSkipVerify: /^(1|true|yes)$/i.test(process.env.WHATSAPP_SKIP_VERIFY || ''),
+  // is uncertain while testing through a tunnel). Forced FALSE in production so a
+  // stray env var can never disable inbound HMAC verification (fail-closed).
+  whatsappSkipVerify: !IS_PROD && /^(1|true|yes)$/i.test(process.env.WHATSAPP_SKIP_VERIFY || ''),
   redisMode: resolveRedisMode(
     process.env.REDIS_MODE || '',
     !!process.env.REDIS_CLUSTER_NODES,
   ),
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
+  // Presence-based (not value-based): any explicit REDIS_URL — including localhost —
+  // opts into Redis; unset means use in-memory (dev) / fail the prod guard.
+  redisConfigured: !!process.env.REDIS_URL || !!process.env.REDIS_CLUSTER_NODES,
   redisClusterNodes: parseClusterNodes(process.env.REDIS_CLUSTER_NODES || ''),
   sessionTtlSeconds: parseInt(process.env.SESSION_TTL_SECONDS || '1800', 10),
   nyBaseUrl: process.env.NY_BASE_URL || 'https://api.moving.tech/pilot/app/v2',
@@ -144,9 +148,15 @@ export const config: Config = {
   // Dev-only: when true, the NY API client is replaced by an in-memory mock
   // (canned auth/places/estimates, no-op booking). No real calls, no dispatch.
   nyMock: /^(1|true|yes)$/i.test(process.env.NY_MOCK || ''),
-  // Default on (preserves local debugging); set NY_LOG_BODIES=0 in production to
-  // stop logging driver name/phone, OTP, and fare on every API call.
-  nyLogBodies: /^(1|true|yes)$/i.test(process.env.NY_LOG_BODIES || 'true'),
+  // TEST ONLY: if set, the flow engine routes EVERY user through this one NY session
+  // token, skipping per-phone silent auth + OTP onboarding. Lets us exercise the real
+  // booking flow with a known rider token. Refused in production (see boot guard below).
+  nyFixedUserToken: process.env.NY_FIXED_USER_TOKEN || undefined,
+  // Logs driver name/phone, OTP, and fare on every API call, so it defaults OFF in
+  // production and ON in dev (local debugging). An explicit NY_LOG_BODIES always wins.
+  nyLogBodies: process.env.NY_LOG_BODIES !== undefined
+    ? /^(1|true|yes)$/i.test(process.env.NY_LOG_BODIES)
+    : !IS_PROD,
   // Pretty-print NY request/response bodies in dev logs (indented + length-capped)
   // instead of one giant single-line JSON blob. Default on; set NY_LOG_PRETTY=0 for
   // compact single-line logs (better for prod log aggregators / grep).
@@ -161,9 +171,6 @@ export const config: Config = {
   rideMode: GLOBAL_RIDE_MODE,
   flexiEnabled: GLOBAL_RIDE_MODE === 'flexi' || GLOBAL_RIDE_MODE === 'both',
   regularEnabled: GLOBAL_RIDE_MODE === 'regular' || GLOBAL_RIDE_MODE === 'both',
-  // Display-only metered tariff for the Flexi fare line (never used to compute a fare).
-  flexiBaseFare: process.env.FLEXI_BASE_FARE ? parseFloat(process.env.FLEXI_BASE_FARE) : undefined,
-  flexiPerKm: process.env.FLEXI_PER_KM ? parseFloat(process.env.FLEXI_PER_KM) : undefined,
   // Geofence for the Flexi flow: pins farther than the radius from this served
   // city's center get an "outside service area" reply (E3). Unset = no geofence.
   flexiServiceArea: process.env.FLEXI_SERVICE_AREA || undefined,
@@ -172,11 +179,6 @@ export const config: Config = {
   // text placeholder is sent instead. Support number is a placeholder for now.
   flexiIntroVideoUrl: process.env.FLEXI_INTRO_VIDEO_URL || undefined,
   flexiSupportPhone: process.env.FLEXI_SUPPORT_PHONE || '+91 80000 00000',
-  // Rental package sent for a Flexi booking. NY only returns a quote when the
-  // distance fits the duration's included km (~10 km/hr), so keep km <= ~10 x hours
-  // (e.g. 10 km / 60 min works; 2 km needs >= ~12 min). Defaults: 10 km / 60 min.
-  flexiRentalDistanceM: Math.max(1, Math.round((parseFloat(process.env.FLEXI_RENTAL_DISTANCE_KM || '10') || 10) * 1000)),
-  flexiRentalDurationS: Math.max(1, Math.round((parseFloat(process.env.FLEXI_RENTAL_DURATION_MIN || '60') || 60) * 60)),
   // Background ride-progress tracker: after a Flexi booking is confirmed, a
   // single timer polls each active ride and pushes arrived/started/ended updates
   // (NY has no rider push channel we can use, so we must poll). Default 12s poll,
@@ -187,6 +189,35 @@ export const config: Config = {
   // customer-service window, so watching a ride past that can't notify anyway.
   flexiTrackMaxAgeMs: Math.min(23 * 60 * 60 * 1000, Math.max(60000, Math.round((parseFloat(process.env.FLEXI_TRACK_MAX_AGE_MIN || '180') || 180) * 60000))),
 };
+
+// --- Production safety guards (fail fast at boot) ---
+// NY_MOCK swaps the real Namma Yatri client for an in-memory stub (no real
+// bookings, no dispatch) — never acceptable in production.
+if (IS_PROD && config.nyMock) {
+  throw new Error(
+    '[config] NY_MOCK must not be enabled in production — it replaces the real Namma Yatri client ' +
+    'with an in-memory stub (no real bookings). Unset NY_MOCK.',
+  );
+}
+// WHATSAPP_SKIP_VERIFY is already forced false in prod (see above); tell the operator it was ignored.
+if (IS_PROD && /^(1|true|yes)$/i.test(process.env.WHATSAPP_SKIP_VERIFY || '')) {
+  console.warn('[config] WHATSAPP_SKIP_VERIFY is set but IGNORED in production — inbound webhook signature verification stays ON.');
+}
+// NY_FIXED_USER_TOKEN routes ALL riders through ONE shared NY account — a test-only
+// shortcut that must never reach production (it would conflate every rider's bookings,
+// history, and safety events into a single account).
+if (config.nyFixedUserToken && IS_PROD) {
+  throw new Error(
+    '[config] NY_FIXED_USER_TOKEN must not be set in production — it routes every rider through a ' +
+    'single shared NY session token (no per-user auth). Unset it before deploying to prod.',
+  );
+}
+if (config.nyFixedUserToken) {
+  console.warn(
+    '⚠️  [config] TEST MODE: NY_FIXED_USER_TOKEN is set — EVERY user is routed through one fixed NY ' +
+    'session token; silent auth + OTP onboarding are skipped. Never use this in production.',
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Merchant registry
@@ -229,8 +260,6 @@ function loadMerchants(): void {
       rideMode: rm,
       flexiEnabled: rm === 'flexi' || rm === 'both',
       regularEnabled: rm === 'regular' || rm === 'both',
-      flexiBaseFare: process.env[`${p}FLEXI_BASE_FARE`] ? parseFloat(process.env[`${p}FLEXI_BASE_FARE`] as string) : config.flexiBaseFare,
-      flexiPerKm: process.env[`${p}FLEXI_PER_KM`] ? parseFloat(process.env[`${p}FLEXI_PER_KM`] as string) : config.flexiPerKm,
       flexiServiceArea: process.env[`${p}FLEXI_SERVICE_AREA`] || config.flexiServiceArea,
       flexiServiceRadiusKm: process.env[`${p}FLEXI_SERVICE_RADIUS_KM`] ? parseFloat(process.env[`${p}FLEXI_SERVICE_RADIUS_KM`] as string) : config.flexiServiceRadiusKm,
       flexiIntroVideoUrl: process.env[`${p}FLEXI_INTRO_VIDEO_URL`] || config.flexiIntroVideoUrl,
@@ -259,8 +288,6 @@ function loadMerchants(): void {
       rideMode: config.rideMode,
       flexiEnabled: config.flexiEnabled,
       regularEnabled: config.regularEnabled,
-      flexiBaseFare: config.flexiBaseFare,
-      flexiPerKm: config.flexiPerKm,
       flexiServiceArea: config.flexiServiceArea,
       flexiServiceRadiusKm: config.flexiServiceRadiusKm,
       flexiIntroVideoUrl: config.flexiIntroVideoUrl,

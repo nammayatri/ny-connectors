@@ -82,42 +82,43 @@ export const en: LanguageStrings = {
   // Flexi (location-only metered booking)
   welcome: "🙏 Namaskara! I'm your Namma Yatri assistant\n\nReady to book an auto?",
   flexiSharePrompt: 'Where should the driver pick you up? 📍',
-  flexiPricing: '📍 Getting your fare…',
   flexiFareBreakup: (base?: number, perKm?: number, nightMult?: number, nightWindow?: string) => {
-    const fare = base != null && perKm != null ? `₹${base} + ₹${perKm}/km`
-      : base != null ? `₹${base}`
-      : perKm != null ? `₹${perKm}/km` : '';
-    const night = nightMult != null && nightWindow ? ` · ${nightWindow}: ${nightMult}× fare` : '';
-    return `🛺 ${fare}${night}`;
+    const lines: string[] = [];
+    if (base != null) lines.push(`First 2km: ₹${base}`);
+    if (perKm != null) lines.push(`Extra: ₹${perKm}/km`);
+    // Night line only when the caller judged it currently night (passes mult + window).
+    if (nightMult != null && nightWindow) lines.push(`🌙 Night (${nightWindow}): ${nightMult}× fare`);
+    return lines.join('\n');
   },
   flexiFareFrom: (amount: number) => `🛺 From ₹${amount}`,
   flexiConfirmPickup: (address: string, fareLine?: string) =>
-    `📍 Your location: near *${address}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nShall we go ahead?`,
+    `📍 Your location: near *${address}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nCash/UPI to the driver after the ride.\nShall we book?`,
   flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
-    `📍 You shared a saved place:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\nShall we go ahead?.`,
+    `📍 You shared a saved place:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nCash/UPI to the driver after the ride.\nShall we book?`,
   pickupConfirmButton: '✅ Confirm pickup',
   pickupAdjustButton: '✏️ Change location',
-  flexiFinding: '🛺 Finding an auto near you…',
-  flexiStillFinding: (elapsed: number) => `⏳ Still finding an auto near you… (${elapsed}s)\n\nSend "cancel" to stop.`,
+  flexiFinding: "🛺 Looking for an auto near you. Wait 1 minute. Don't close WhatsApp.",
+  flexiStillFinding: '⏳ Still looking for an auto near you…\n\nSend "cancel" to stop.',
   flexiCancelSearch: '❌ Cancel search',
   flexiFoundDriver: (name: string) => `🛺 *${name}* is on the way.`,
   flexiDriverMeta: (rating: number, etaMin: number) => `⭐ ${rating} · ${etaMin} min away`,
   flexiOtpShare: (otp: string) => `🔑 Start OTP: *${otp}*`,
   flexiCallDriver: (phone: string) => `📞 Call driver: ${phone}`,
   flexiSafetyNote: "Confirm your destination with the driver.",
-  flexiNoAuto: '😔 No auto available near you right now. Please try again.',
+  flexiNoAuto: '😔 No free auto right now. Try again after 2 minutes.',
   flexiTryAgain: '🔁 Try again',
   flexiOutOfArea: (area: string) => `📍 That location looks outside our service area.\n\nNamma Yatri autos currently run in *${area}*. Try a pickup there, or check back soon.`,
   // Flexi ride-progress updates (pushed by the background tracker)
   flexiArrived: (otp: string) => otp
-    ? `🛺 Your auto has arrived!\nShare OTP with the driver to start.\n\n🔑 OTP: *${otp}* `
-    : '🛺 Your auto has arrived!\nPlease meet your driver at the pickup point.',
-  flexiFareFinal: (amount: number, km?: number) =>
-    km != null ? `💰 Total fare: *₹${amount}* · ${km} km` : `💰 Total fare: *₹${amount}*`,
+    ? `🛺 Driver arrived! Tell the start OTP to the driver.\n\n🔑 OTP: ${otp}`
+    : '🛺 Driver arrived! Please meet your driver at the pickup point.',
   flexiFareUnavailable: '💰 Your fare will be confirmed shortly.',
-  flexiRideEnded: (fareLine: string) => `🎉 Ride complete!\n\n${fareLine}\n\n🙏 Thank you for riding with Namma Yatri.`,
+  flexiRideFinishedHeader: '🎉 Ride finished.',
+  flexiPayDriver: (amount: number) => `💰 Give the driver ₹${amount} cash/UPI`,
+  flexiDistanceLine: (km: number) => `📏 ${km} km`,
   flexiRideCancelled: '❌ Your ride was cancelled.\n\nNeed to go somewhere? Book another auto anytime.',
   flexiBookAnother: '🛺 Book another',
+  appDownloadNudge: '🙏 Download the Namma Yatri app!\nhttps://play.google.com/store/apps/details?id=in.juspay.nammayatri',
   // Flexi "hi" menu — More drawer + how-it-works + support
   moreButton: '⚙️ More options',
   moreTitle: 'What would you like to do?',
@@ -129,7 +130,7 @@ export const en: LanguageStrings = {
   // Ride-type chooser + generic ride-started
   rideTypePrompt: 'How would you like to travel?',
   rideTypeFlexi: '🛺 Quick Ride',
-  rideTypeRegular: '🚗 Ride with destination',
+  rideTypeRegular: '🚗 Ride with drop',
   rideStartedSimple: '🚦 Your ride has started. Enjoy the trip!',
   // Regular one-way flow (pickup + drop → auto fare → book)
   regularDropPrompt: 'Where are you going? 📍\n\nShare your drop location, or type the address.',

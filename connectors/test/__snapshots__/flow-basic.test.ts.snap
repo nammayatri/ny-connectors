@@ -6,7 +6,7 @@ exports[`More options submenu (both merchant) > opens a submenu with Ride-with-d
     "buttons": [
       {
         "data": "ride_type:regular",
-        "text": "🚗 Ride with destination",
+        "text": "🚗 Ride with drop",
       },
       {
         "data": "help",

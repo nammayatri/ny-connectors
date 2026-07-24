@@ -82,8 +82,6 @@ export interface LanguageStrings {
   // Flexi (location-only metered booking)
   welcome: string;
   flexiSharePrompt: string;
-  // Brief ack after a pin is shared, while the ~10s quote search runs.
-  flexiPricing: string;
   // Pre-booking fare shown at the pickup-confirm prompt + re-stated in "finding".
   flexiFareBreakup: (base?: number, perKm?: number, nightMult?: number, nightWindow?: string) => string;
   // Neutral fallback when a quote carries no rate-card breakup (only a headline fare).
@@ -93,7 +91,7 @@ export interface LanguageStrings {
   pickupConfirmButton: string;
   pickupAdjustButton: string;
   flexiFinding: string;
-  flexiStillFinding: (elapsed: number) => string;
+  flexiStillFinding: string;
   flexiCancelSearch: string;
   flexiFoundDriver: (name: string) => string;
   flexiDriverMeta: (rating: number, etaMin: number) => string;
@@ -105,11 +103,17 @@ export interface LanguageStrings {
   flexiOutOfArea: (area: string) => string;
   // Flexi ride-progress updates (pushed by the background tracker)
   flexiArrived: (otp: string) => string;
-  flexiFareFinal: (amount: number, km?: number) => string;
   flexiFareUnavailable: string;
-  flexiRideEnded: (fareLine: string) => string;
+  // Ride-finished message, assembled from atoms: header + pay-the-driver line +
+  // optional distance line + the app-download nudge.
+  flexiRideFinishedHeader: string;
+  flexiPayDriver: (amount: number) => string;
+  flexiDistanceLine: (km: number) => string;
   flexiRideCancelled: string;
   flexiBookAnother: string;
+  // App-download nudge, appended to the ride-finished, Track-Ride status,
+  // SOS-confirm, and Support surfaces.
+  appDownloadNudge: string;
   // Flexi "hi" menu — More drawer + how-it-works + support
   moreButton: string;
   moreTitle: string;

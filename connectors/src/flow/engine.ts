@@ -204,7 +204,7 @@ export class FlowEngine {
       if (input === 'sos_confirm' && ctx.nyToken) {
         ctx.state = 'CONFIRMING_SOS';
         await this.saveContext(message, ctx);
-        await replyWithButtons(s.sosConfirm, [
+        await replyWithButtons(`${s.sosConfirm}\n\n${s.appDownloadNudge}`, [
           [{ text: s.yesTriggerSOS, data: 'sos_trigger' }],
           [{ text: s.noGoBack, data: 'sos_cancel' }],
         ]);
@@ -215,9 +215,11 @@ export class FlowEngine {
       if (input === 'sos_trigger' && ctx.nyToken) {
         try {
           const client = new NammaYatriClient(ctx.nyToken);
-          const createdAfter = ctx.selectStartedAt ? new Date(ctx.selectStartedAt) : undefined;
-          const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
-          const booking = bookings[0];
+          // Resolve via the registry-known booking (getBookingDetails), NOT getActiveBookings:
+          // listV2's status filter excludes INPROGRESS rides, which is exactly when SOS matters
+          // most (the ride has started). resolveActiveBooking survives INPROGRESS so the ride id
+          // is still available. (Same INPROGRESS-safe path handleStatus/handleTracking use.)
+          const booking = await this.resolveActiveBooking(message, client);
           const rideId = booking?.rideList?.[0]?.id;
           if (rideId) {
             const sosId = await client.triggerSOS(rideId);
@@ -337,9 +339,9 @@ export class FlowEngine {
       }
 
       // "More options": a submenu (a second message). Holds the *other* ride type
-      // ("Ride with destination" = Regular) plus How it works + Support. The extra
+      // ("Ride with drop" = Regular) plus How it works + Support. The extra
       // "Main menu" row also nudges WhatsApp into a list layout, so the longer
-      // "Ride with destination" label isn't truncated. Voice etc. slot in here later.
+      // "Ride with drop" label isn't truncated. Voice etc. slot in here later.
       if (input === 'more') {
         const items: { text: string; data: string }[] = [];
         if (this.flexiOffered(message) && this.regularOffered(message)) {
@@ -359,7 +361,7 @@ export class FlowEngine {
       if (input === 'support') {
         const supportMerchant = this.getMerchantConfig(message);
         const raw = supportMerchant?.flexiSupportPhone ?? config.flexiSupportPhone ?? '';
-        await reply(s.supportMessage(formatDialable(raw) ?? raw));
+        await reply(`${s.supportMessage(formatDialable(raw) ?? raw)}\n\n${s.appDownloadNudge}`);
         await replyWithButtons(s.moreTitle, await this.menuRow(message, s)); // loop back to the menu
         return;
       }
@@ -439,7 +441,7 @@ export class FlowEngine {
           await this.handleTracking(ctx, message, reply, replyWithButtons);
           break;
         case 'CONFIRMING_SOS':
-          await replyWithButtons(s.sosConfirm, [
+          await replyWithButtons(`${s.sosConfirm}\n\n${s.appDownloadNudge}`, [
             [{ text: s.yesTriggerSOS, data: 'sos_trigger' }],
             [{ text: s.noGoBack, data: 'sos_cancel' }],
           ]);
@@ -867,7 +869,7 @@ export class FlowEngine {
           break;
         }
       } catch (err: any) { console.warn(`[regular] poll error (${i + 1}): ${err.message}`); }
-      if (i > 0 && i % POLL_NOTIFY_EVERY === 0) await reply(s.flexiStillFinding(Math.round(((i + 1) * POLL_INTERVAL) / 1000)));
+      if (i > 0 && i % POLL_NOTIFY_EVERY === 0) await reply(s.flexiStillFinding);
       await sleep(POLL_INTERVAL);
     }
 
@@ -999,7 +1001,6 @@ export class FlowEngine {
     connector?: Connector,
     namedPlace?: string,
   ): Promise<void> {
-    const s = t(ctx.language);
     if (!ctx.nyToken || !ctx.origin) {
       await this.promptForPickup(ctx, msg, reply, connector);
       return;
@@ -1010,8 +1011,10 @@ export class FlowEngine {
     ctx.state = 'FLEXI_SEARCHING';
     ctx.cancelRequested = false;
     await this.saveContext(msg, ctx);
-    // Brief ack — a real EasyBooking on_search takes ~10s to return quotes.
-    await reply(s.flexiPricing);
+    // Native "typing…" (ref the pin's inbound id) while the ~10s quote search runs —
+    // best-effort aliveness, cleared when the confirm prompt / no-auto lands. Replaces
+    // the old text ack; one fire covers the search (well under the 25s cap).
+    this.fireTyping(msg, connector);
     let quote: NYFlexiQuote | null = null;
     try {
       quote = await this.searchFlexiQuote(client, ctx, msg);
@@ -1070,6 +1073,16 @@ export class FlowEngine {
     const chosen = quotes.find((q) => q.vehicleVariant === 'AUTO_RICKSHAW') ?? quotes[0];
     console.log(`[flexi] chosen quote: variant=${chosen.vehicleVariant} fare=${chosen.estimatedFare} id=${chosen.quoteId}`);
     return chosen;
+  }
+
+  /** Fire a best-effort "typing…" indicator referencing the rider's inbound message,
+   *  to signal aliveness during a wait. Fire-and-forget: never awaited (no added
+   *  latency) and never throws (the connector swallows failures). Re-fire to extend
+   *  past the ~25s WhatsApp cap. No-op when the channel has no inbound id. */
+  private fireTyping(msg: CommandMessage, connector?: Connector): void {
+    if (!connector || !msg.messageId) return;
+    void connector.sendTypingIndicator(this.getReplyTarget(msg, connector), msg.messageId, this.getMerchantConfig(msg))
+      .catch(() => { /* best-effort aliveness — ignore */ });
   }
 
   /** The fare rate-card line for the current quote — the breakup breakdown, or a
@@ -1157,9 +1170,12 @@ export class FlowEngine {
       // "Finding an auto" — re-state the (possibly re-priced) true fare on one line.
       const fareLine = this.flexiFareLine(ctx);
       await replyWithButtons(
-        fareLine ? `${s.flexiFinding}\n${fareLine}` : s.flexiFinding,
+        fareLine ? `${s.flexiFinding}\n\n${fareLine}` : s.flexiFinding,
         [[{ text: s.flexiCancelSearch, data: 'cancel' }]],
       );
+      // NB: no "typing…" during the driver search — WhatsApp only renders it for the
+      // most-recent inbound, which here is the Confirm-tap button-reply (not a
+      // renderable type). The "Still finding…" text below is the aliveness signal.
       bookingId = await client.confirmQuote(ctx.flexiQuoteId);
       if (!bookingId) {
         console.error('[flexi] confirmQuote returned no bookingId — cannot track the booking');
@@ -1217,7 +1233,7 @@ export class FlowEngine {
     // Poll for driver assignment (same cadence as the estimate flow).
     const POLL_ATTEMPTS = 90;
     const POLL_INTERVAL = 2000;
-    const POLL_NOTIFY_EVERY = 15;
+    const POLL_NOTIFY_EVERY = 15;   // "Still finding…" text every ~30s (the driver-search aliveness signal)
     let foundBooking: any = null;
     for (let i = 0; i < POLL_ATTEMPTS; i++) {
       const freshCtx = await this.getContext(msg);
@@ -1240,7 +1256,7 @@ export class FlowEngine {
         console.warn(`[flexi] poll error (attempt ${i + 1}): ${err.message}`);
       }
       if (i > 0 && i % POLL_NOTIFY_EVERY === 0) {
-        await reply(s.flexiStillFinding(Math.round(((i + 1) * POLL_INTERVAL) / 1000)));
+        await reply(s.flexiStillFinding);
       }
       await sleep(POLL_INTERVAL);
     }
@@ -1315,6 +1331,7 @@ export class FlowEngine {
     if (driverName) lines.push(s.driverLabel(driverName));
     if (vehicleNumber) lines.push(s.vehicleLabel(vehicleNumber));
     lines.push(`\n${s.track}\n${trackingLink}`);
+    lines.push('', s.appDownloadNudge);
 
     const buttons: { text: string; data: string }[][] = [];
     if (ctx.sosId) {
@@ -1363,6 +1380,7 @@ export class FlowEngine {
     if (driverPhoneNum) lines.push(s.phoneLabel(driverPhoneNum));
     if (otp) lines.push(s.otpLabel(otp));
     lines.push(`\n${s.track}\n${trackingLink}`);
+    lines.push('', s.appDownloadNudge);
 
     if (replyWithButtons) {
       const buttons: { text: string; data: string }[][] = [];
@@ -1393,20 +1411,29 @@ export class FlowEngine {
         const createdAfter = this.getCreatedAfterDate(ctx);
 
         const bookings = await client.getActiveBookings(createdAfter).catch(() => []);
-        const booking = explicitBookingId
+        let booking = explicitBookingId
           ? (bookings.find((b: any) => b.id === explicitBookingId) || null)
           : ctx.activeBookingId
             ? (bookings.find((b: any) => b.id === ctx.activeBookingId) || bookings[0] || null)
             : bookings[0] || null;
 
+        // The booking to stop tracking on a user-initiated cancel (the cancel
+        // button carries the id; fall back to the flexi/active booking in context).
+        const trackedId = explicitBookingId || ctx.flexiBookingId || ctx.activeBookingId || booking?.id || undefined;
+
+        // getActiveBookings (listV2) drops EasyBooking bookings that have no driver
+        // yet (rideList empty) and INPROGRESS/COMPLETED ones. Without this, "Cancel
+        // search" would find nothing → skip cancelRide + tracker de-registration and
+        // only reset locally, leaving the server ride LIVE and the tracker still
+        // polling it. Resolve the KNOWN booking id directly so the cancel sticks.
+        if (!booking && trackedId) {
+          booking = await client.getBookingDetails(trackedId, { allowListFallback: false }).catch(() => null);
+        }
+
         const bookingStatus = booking?.status?.toUpperCase();
         const rideStatus = booking?.rideList?.[0]?.status?.toUpperCase();
 
         console.log(`[cancel] booking=${booking?.id} bookingStatus=${bookingStatus} rideStatus=${rideStatus}`);
-
-        // The booking to stop tracking on a user-initiated cancel (the cancel
-        // button carries the id; fall back to the flexi/active booking in context).
-        const trackedId = explicitBookingId || ctx.flexiBookingId || ctx.activeBookingId || booking?.id || undefined;
 
         if (bookingStatus === 'COMPLETED' || rideStatus === 'COMPLETED') {
           await this.resetContext(msg);
@@ -1632,11 +1659,10 @@ export class FlowEngine {
   private async menuRow(msg: CommandMessage, s: ReturnType<typeof t>): Promise<{ text: string; data: string }[][]> {
     const row: { text: string; data: string }[] = [];
     if (await this.hasActiveRide(msg)) row.push({ text: s.trackRide, data: 'status' });
-    // Primary book button: Quick Ride (metered) when offered. When only the
-    // destination ride is offered, use the short generic "Book a Ride" label —
-    // the full "Ride with destination" (24 chars) would be truncated in a
-    // 3-button reply layout, and naming the type is pointless with only one.
-    // Tapping it silently auths / onboards, then asks pickup.
+    // Primary book button: Quick Ride (metered) when offered. When only the drop
+    // ride is offered, use the short generic "Book a Ride" label — naming the ride
+    // type is pointless when only one is on offer. Tapping it silently auths /
+    // onboards, then asks pickup.
     if (this.flexiOffered(msg)) {
       row.push({ text: s.rideTypeFlexi, data: 'ride_type:flexi' });
     } else {

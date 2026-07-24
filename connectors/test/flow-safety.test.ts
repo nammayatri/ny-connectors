@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { makeWorld, makeMessage, makePin, send, structured, World } from './harness';
+import { MockNammaYatriClient } from '../src/ny/mock-client';
 
 const FLEXI = 'pn_flexi';
 const USER = '919361176218';
@@ -21,6 +22,8 @@ describe('SOS → mark safe', () => {
     expect(structured(confirm)).toEqual([
       { kind: 'buttons', to: USER, merchant: 'FLEXI', buttons: ['sos_trigger', 'sos_cancel'] },
     ]);
+    // The SOS-confirm prompt keeps its content and also nudges the app download.
+    expect(confirm[0].text).toContain('Download the Namma Yatri app!');
 
     const trigger = await send(w, makeMessage(FLEXI, USER, 'sos_trigger'));
     expect(structured(trigger)).toEqual([
@@ -44,5 +47,49 @@ describe('SOS → mark safe', () => {
     const out = await send(w, makeMessage(FLEXI, USER, 'call_112'));
     expect(out).toHaveLength(1);
     expect(out[0].text).toContain('112');
+  });
+});
+
+describe('app-download nudge surfaces', () => {
+  it('appears on the Track-Ride status screen for an active ride', async () => {
+    const w = makeWorld();
+    await bookFlexi(w);
+    const status = await send(w, makeMessage(FLEXI, USER, 'status'));
+    expect(status.some((r) => r.text?.includes('Download the Namma Yatri app!'))).toBe(true);
+  });
+
+  it('appears on the Support message', async () => {
+    const w = makeWorld();
+    await send(w, makeMessage(FLEXI, USER, 'ride_type:flexi')); // establish a session
+    const out = await send(w, makeMessage(FLEXI, USER, 'support'));
+    expect(out.some((r) => r.text?.includes('Download the Namma Yatri app!'))).toBe(true);
+  });
+});
+
+describe('SOS on an in-progress ride (INPROGRESS-safe lookup)', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('triggers SOS mid-ride via the registry booking — getActiveBookings would drop INPROGRESS', async () => {
+    const w = makeWorld();
+    await bookFlexi(w);
+
+    // Force the registry booking to look INPROGRESS — the moment SOS matters most, and
+    // exactly the state the real listV2 (getActiveBookings) status filter drops.
+    const inProgress = {
+      id: 'mock-booking-001',
+      status: 'TRIP_ASSIGNED',
+      rideList: [{ id: 'mock-ride-001', status: 'INPROGRESS', driverName: 'Ravi Kumar', rideOtp: '4321' }],
+    };
+    const detailsSpy = vi
+      .spyOn(MockNammaYatriClient.prototype, 'getBookingDetails')
+      .mockResolvedValue(inProgress);
+
+    const trigger = await send(w, makeMessage(FLEXI, USER, 'sos_trigger'));
+
+    // The fix routes SOS through getBookingDetails (INPROGRESS-safe), NOT getActiveBookings.
+    expect(detailsSpy).toHaveBeenCalledWith('mock-booking-001', expect.anything());
+    // Success → mark-safe prompt, never the "No active ride found" failure.
+    expect(trigger.some((r) => r.buttons?.some((b) => b.data === 'mark_safe_confirm'))).toBe(true);
+    expect(trigger.every((r) => !/No active ride found/i.test(r.text ?? ''))).toBe(true);
   });
 });

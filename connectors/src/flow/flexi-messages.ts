@@ -63,6 +63,16 @@ function fmtHour(h: number): string {
 // (46.1 + 3.2 === 49.300000000000004) that would otherwise render to the rider.
 const money2 = (n: number): number => Math.round(n * 100) / 100;
 
+// True when the current IST wall-clock falls inside [startSec, endSec) seconds-of-day,
+// handling a window that wraps midnight (start > end, e.g. 22:00 → 05:00). India has
+// no DST, so a fixed +5:30 offset is exact.
+function isWithinISTWindow(startSec?: number, endSec?: number): boolean {
+  if (startSec == null || endSec == null) return false;
+  const IST_OFFSET_MS = 330 * 60 * 1000; // UTC+5:30
+  const sec = ((Math.floor((Date.now() + IST_OFFSET_MS) / 1000) % 86400) + 86400) % 86400;
+  return startSec <= endSec ? sec >= startSec && sec < endSec : sec >= startSec || sec < endSec;
+}
+
 function fareParts(breakup?: Record<string, number>): FareParts {
   if (!breakup) return {};
   const b = breakup.BASE_FARE;
@@ -70,9 +80,18 @@ function fareParts(breakup?: Record<string, number>): FareParts {
   const base = b != null || d != null ? money2((b ?? 0) + (d ?? 0)) : undefined;
   const start = breakup.NIGHT_SHIFT_START_TIME_IN_SECONDS;
   const end = breakup.NIGHT_SHIFT_END_TIME_IN_SECONDS;
-  const nightWindow = start != null && end != null
+  // Only surface the night surcharge when the rider is CURRENTLY inside the window —
+  // a daytime rider shouldn't see a night line for a charge they won't pay. Passing
+  // undefined mult/window makes the i18n builder omit the line entirely.
+  const nightNow = isWithinISTWindow(start, end);
+  const nightWindow = nightNow && start != null && end != null
     ? `${fmtHour(start / 3600)}–${fmtHour(end / 3600)}` : undefined;
-  return { base, perKm: breakup.EXTRA_PER_KM_FARE, nightMult: breakup.NIGHT_SHIFT_CHARGE, nightWindow };
+  return {
+    base,
+    perKm: breakup.EXTRA_PER_KM_FARE,
+    nightMult: nightNow ? breakup.NIGHT_SHIFT_CHARGE : undefined,
+    nightWindow,
+  };
 }
 
 /** Render the fare rate-card line for a quote's breakup, or undefined when there
@@ -137,11 +156,14 @@ export function buildArrived(booking: any, language?: SupportedLanguage): BuiltM
 }
 
 /** Start OTP entered — trip underway. EasyBooking (and ONE_WAY Regular) rides are
- *  driver-ended with no rider end OTP, so this is a plain "ride started" message
- *  with no button. */
+ *  driver-ended with no rider end OTP, so this is a plain "ride started" message —
+ *  carrying an SOS button so safety help is one tap away during the trip. */
 export function buildStarted(_booking: any, language?: SupportedLanguage): BuiltMessage {
   const s = t(language);
-  return { text: s.rideStartedSimple };
+  return {
+    text: s.rideStartedSimple,
+    buttons: [[{ text: s.sosButton, data: 'sos_confirm' }]],
+  };
 }
 
 /** Ride completed — surface the real final fare + distance when available. */
@@ -155,9 +177,16 @@ export function buildEnded(booking: any, language?: SupportedLanguage): BuiltMes
     ?? num(ride?.chargeableRideDistanceWithUnit?.value);
   const km = distM != null ? Math.round(distM / 100) / 10 : undefined; // meters → km, 1dp
 
-  const fareLine = fare != null ? s.flexiFareFinal(fare, km) : s.flexiFareUnavailable;
+  // 🎉 Ride finished. / 💰 Give the driver ₹X cash/UPI / 📏 Y km / <app nudge>.
+  // Distance line only when we have both a fare and a distance.
+  const lines: string[] = [
+    s.flexiRideFinishedHeader,
+    fare != null ? s.flexiPayDriver(fare) : s.flexiFareUnavailable,
+  ];
+  if (fare != null && km != null) lines.push(s.flexiDistanceLine(km));
+  lines.push('', s.appDownloadNudge);
   return {
-    text: s.flexiRideEnded(fareLine),
+    text: lines.join('\n'),
     buttons: [[{ text: s.flexiBookAnother, data: 'book' }]],
   };
 }

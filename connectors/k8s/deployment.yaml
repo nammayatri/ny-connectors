@@ -1,29 +1,33 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: message-gateway
+  name: ny-connectors
   labels:
-    app: message-gateway
+    app: ny-connectors
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: message-gateway
+      app: ny-connectors
   template:
     metadata:
       labels:
-        app: message-gateway
+        app: ny-connectors
     spec:
       containers:
-        - name: message-gateway
-          image: message-gateway:latest
+        - name: ny-connectors
+          # The image published by .github/workflows/connectors-ci.yml.
+          # ⚠️ Pin to a specific sha-<gitsha> tag (from the CI "Pinnable image"
+          # output) before a real rollout — :latest is a moving convenience tag
+          # and defeats reproducible deploys / rollbacks.
+          image: ghcr.io/nammayatri/ny-connectors:latest
           ports:
             - containerPort: 3000
           envFrom:
             - configMapRef:
-                name: message-gateway-config
+                name: ny-connectors-config
             - secretRef:
-                name: message-gateway-secrets
+                name: ny-connectors-secrets
           livenessProbe:
             httpGet:
               path: /health
