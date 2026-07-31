@@ -1,0 +1,82 @@
+name: connectors CI
+
+# Test-gates and builds the WhatsApp connectors service: `npm test` (the in-repo
+# Vitest suite — flow/snapshot + unit tests) must pass before an image is published.
+# NOTE: the webhook-layer "golden" oracle (golden-fixtures.test.ts) reads fixtures
+# from ../../migration/golden, which lives OUTSIDE this repo, so it self-skips on a CI
+# checkout — it gates locally, not here. The in-repo tests (incl. the flexi 401
+# re-auth test) are the CI gate.
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+    paths:
+      - 'connectors/**'
+      - '.github/workflows/connectors-ci.yml'
+  pull_request:
+    paths:
+      - 'connectors/**'
+      - '.github/workflows/connectors-ci.yml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: nammayatri/ny-connectors
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: connectors
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: connectors/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  build-and-push:
+    needs: test            # never publish an image the tests didn't pass
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Determine image tag
+        id: image-tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+          else
+            # A pinnable, rollback-friendly tag (short commit SHA) — not a moving :latest.
+            TAG=sha-${GITHUB_SHA::12}
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Image will be tagged as: $TAG"
+      - uses: docker/build-push-action@v5
+        with:
+          context: ./connectors
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+      - name: Output image reference
+        run: |
+          echo "Pinnable image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.tag }}"
+          echo "Set this exact tag in k8s/deployment.yaml (not :latest) for reproducible rollouts."

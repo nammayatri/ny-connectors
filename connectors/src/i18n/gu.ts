@@ -90,8 +90,6 @@ export const gu: LanguageStrings = {
   flexiFareFrom: (amount: number) => `🛺 ₹${amount}થી`,
   flexiConfirmPickup: (address: string, fareLine?: string) =>
     `📍 તમારું લોકેશન: *${address}* પાસે.${fareLine ? `\n\n${fareLine}` : ''}\n\nરાઈડ પછી ડ્રાઈવરને રોકડ/UPI ચૂકવો.\nબુક કરીએ?`,
-  flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
-    `📍 તમે એક સેવ કરેલી જગ્યા મોકલી:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nરાઈડ પછી ડ્રાઈવરને રોકડ/UPI ચૂકવો.\nબુક કરીએ?`,
   pickupConfirmButton: '✅ પિકઅપ કન્ફર્મ કરો',
   pickupAdjustButton: '✏️ જગ્યા બદલો',
   flexiFinding: '🛺 તમારી નજીક ઓટો શોધી રહ્યા છીએ. 1 મિનિટ રાહ જુઓ. WhatsApp બંધ ન કરો.',

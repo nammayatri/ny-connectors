@@ -90,8 +90,6 @@ export const te: LanguageStrings = {
   flexiFareFrom: (amount: number) => `🛺 ₹${amount} నుండి`,
   flexiConfirmPickup: (address: string, fareLine?: string) =>
     `📍 మీ లొకేషన్: *${address}* దగ్గర.${fareLine ? `\n\n${fareLine}` : ''}\n\nరైడ్ తర్వాత డ్రైవర్‌కు నగదు/UPI చెల్లించండి.\nబుక్ చేయాలా?`,
-  flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
-    `📍 మీరు సేవ్ చేసిన స్థలాన్ని పంపారు:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nరైడ్ తర్వాత డ్రైవర్‌కు నగదు/UPI చెల్లించండి.\nబుక్ చేయాలా?`,
   pickupConfirmButton: '✅ పికప్ నిర్ధారించండి',
   pickupAdjustButton: '✏️ స్థలం మార్చు',
   flexiFinding: '🛺 మీ దగ్గర ఆటో వెతుకుతున్నాము. 1 నిమిషం వేచి ఉండండి. WhatsApp మూసివేయవద్దు.',

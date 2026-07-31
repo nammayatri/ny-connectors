@@ -972,22 +972,21 @@ export class FlowEngine {
         address: {},
       };
     }
-    if ((location.name || location.address) && !origin.address.area) {
-      origin.address = { ...origin.address, area: location.name || location.address };
-    }
+    // NOTE: the WhatsApp-supplied location.name/address is deliberately NOT used to
+    // label the pickup — the confirm reply always names it from the getPlaceName
+    // result (reverseGeocode above), so a saved-place/business name that differs
+    // from where the coordinates resolve can't mislead the rider.
     ctx.origin = origin;
     await this.saveContext(msg, ctx);
     if (this.resolveRideType(ctx, msg) === 'flexi') {
       // Flexi: price the ride NOW, before the rider commits — EasyBooking search
       // is quote-only and dispatches NO driver (that happens on confirm), so we
-      // can surface a concrete fare in the confirm prompt. If the user shared a
-      // NAMED/saved place, location.name is set (a live share has none) → the
-      // confirm still warns it may not be their physical spot.
-      await this.priceAndConfirmPickup(ctx, msg, reply, replyWithButtons, connector, location.name);
+      // can surface a concrete fare in the confirm prompt.
+      await this.priceAndConfirmPickup(ctx, msg, reply, replyWithButtons, connector);
     } else {
       // Regular: metered upfront pricing doesn't apply — confirm the pickup, then
       // ask for the drop and price the one-way auto from there.
-      await this.sendPickupConfirm(ctx, msg, replyWithButtons, location.name);
+      await this.sendPickupConfirm(ctx, msg, replyWithButtons);
     }
   }
 
@@ -999,7 +998,6 @@ export class FlowEngine {
     reply: (txt: string) => Promise<void>,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
     connector?: Connector,
-    namedPlace?: string,
   ): Promise<void> {
     if (!ctx.nyToken || !ctx.origin) {
       await this.promptForPickup(ctx, msg, reply, connector);
@@ -1047,7 +1045,7 @@ export class FlowEngine {
       capturedAt: new Date().toISOString(),
     };
     await this.saveContext(msg, after);
-    await this.sendPickupConfirm(after, msg, replyWithButtons, namedPlace);
+    await this.sendPickupConfirm(after, msg, replyWithButtons);
   }
 
   /** Run one EasyBooking search + poll its results, returning the chosen (auto)
@@ -1114,19 +1112,20 @@ export class FlowEngine {
   private async sendPickupConfirm(
     ctx: FlowContext, msg: CommandMessage,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
-    namedPlace?: string,
   ) {
     const s = t(ctx.language);
     ctx.state = 'CONFIRMING_PICKUP';
     await this.saveContext(msg, ctx);
-    const label = namedPlace
-      || ctx.origin?.address?.area
-      || (ctx.origin ? formatAddress(ctx.origin) : '')
-      || 'your shared location';
+    // Always name the pickup from the getPlaceName result (building + street +
+    // area) — never the WhatsApp-supplied name, which can differ from where the
+    // shared coordinates actually resolve. Generic fallback if the API gave nothing.
+    const a = ctx.origin?.address;
+    const parts = [a?.building, a?.street, a?.area].filter(Boolean);
+    const label = parts.length ? parts.join(', ') : 'your shared location';
     // Show the quote's fare rate-card (searched at pickup-share) so the rider
     // agrees to a concrete fare before the ride is booked.
     const fareLine = this.flexiFareLine(ctx);
-    const body = namedPlace ? s.flexiConfirmSavedPlace(namedPlace, fareLine) : s.flexiConfirmPickup(label, fareLine);
+    const body = s.flexiConfirmPickup(label, fareLine);
     await replyWithButtons(body, [
       [{ text: s.pickupConfirmButton, data: 'pickup_confirm' }],
       [{ text: s.pickupAdjustButton, data: 'pickup_adjust' }],

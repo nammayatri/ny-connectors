@@ -90,8 +90,6 @@ export const ta: LanguageStrings = {
   flexiFareFrom: (amount: number) => `🛺 ₹${amount} முதல்`,
   flexiConfirmPickup: (address: string, fareLine?: string) =>
     `📍 உங்கள் இருப்பிடம்: *${address}* அருகில்.${fareLine ? `\n\n${fareLine}` : ''}\n\nசவாரிக்குப் பிறகு டிரைவருக்கு பணம்/UPI செலுத்துங்கள்.\nபுக் செய்யலாமா?`,
-  flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
-    `📍 நீங்கள் சேமித்த இடத்தை அனுப்பியுள்ளீர்கள்:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nசவாரிக்குப் பிறகு டிரைவருக்கு பணம்/UPI செலுத்துங்கள்.\nபுக் செய்யலாமா?`,
   pickupConfirmButton: '✅ பிக்அப்பை உறுதிப்படுத்து',
   pickupAdjustButton: '✏️ இடத்தை மாற்று',
   flexiFinding: '🛺 உங்களுக்கு அருகில் ஆட்டோ தேடுகிறோம். 1 நிமிடம் காத்திருங்கள். WhatsApp ஐ மூடாதீர்கள்.',

@@ -93,8 +93,6 @@ export const en: LanguageStrings = {
   flexiFareFrom: (amount: number) => `🛺 From ₹${amount}`,
   flexiConfirmPickup: (address: string, fareLine?: string) =>
     `📍 Your location: near *${address}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nCash/UPI to the driver after the ride.\nShall we book?`,
-  flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
-    `📍 You shared a saved place:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nCash/UPI to the driver after the ride.\nShall we book?`,
   pickupConfirmButton: '✅ Confirm pickup',
   pickupAdjustButton: '✏️ Change location',
   flexiFinding: "🛺 Looking for an auto near you. Wait 1 minute. Don't close WhatsApp.",

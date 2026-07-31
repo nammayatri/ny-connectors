@@ -87,7 +87,6 @@ export interface LanguageStrings {
   // Neutral fallback when a quote carries no rate-card breakup (only a headline fare).
   flexiFareFrom: (amount: number) => string;
   flexiConfirmPickup: (address: string, fareLine?: string) => string;
-  flexiConfirmSavedPlace: (name: string, fareLine?: string) => string;
   pickupConfirmButton: string;
   pickupAdjustButton: string;
   flexiFinding: string;

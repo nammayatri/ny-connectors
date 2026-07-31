@@ -90,8 +90,6 @@ export const kn: LanguageStrings = {
   flexiFareFrom: (amount: number) => `🛺 ₹${amount} ರಿಂದ`,
   flexiConfirmPickup: (address: string, fareLine?: string) =>
     `📍 ನಿಮ್ಮ ಸ್ಥಳ: *${address}* ಹತ್ತಿರ.${fareLine ? `\n\n${fareLine}` : ''}\n\nರೈಡ್ ನಂತರ ಚಾಲಕರಿಗೆ ನಗದು/UPI ಪಾವತಿಸಿ.\nಬುಕ್ ಮಾಡೋಣವೇ?`,
-  flexiConfirmSavedPlace: (name: string, fareLine?: string) =>
-    `📍 ನೀವು ಉಳಿಸಿದ ಸ್ಥಳವನ್ನು ಕಳುಹಿಸಿದ್ದೀರಿ:\n *${name}*.${fareLine ? `\n\n${fareLine}` : ''}\n\nರೈಡ್ ನಂತರ ಚಾಲಕರಿಗೆ ನಗದು/UPI ಪಾವತಿಸಿ.\nಬುಕ್ ಮಾಡೋಣವೇ?`,
   pickupConfirmButton: '✅ ಪಿಕಪ್ ಖಚಿತಪಡಿಸಿ',
   pickupAdjustButton: '✏️ ಸ್ಥಳ ಬದಲಿಸಿ',
   flexiFinding: '🛺 ನಿಮ್ಮ ಹತ್ತಿರ ಆಟೋ ಹುಡುಕುತ್ತಿದ್ದೇವೆ. 1 ನಿಮಿಷ ಕಾಯಿರಿ. WhatsApp ಮುಚ್ಚಬೇಡಿ.',

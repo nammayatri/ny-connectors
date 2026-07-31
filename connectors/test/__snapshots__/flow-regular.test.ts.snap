@@ -102,7 +102,7 @@ exports[`regular (Ride with destination) book + track lifecycle > prices a one-w
     ],
     "kind": "buttons",
     "merchant": "REG",
-    "text": "📍 Your location: near *Shared pin location*.
+    "text": "📍 Your location: near *2, 8th Main Road, Koramangala*.
 
 Cash/UPI to the driver after the ride.
 Shall we book?",

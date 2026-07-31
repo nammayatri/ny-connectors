@@ -117,7 +117,12 @@ export class MockNammaYatriClient extends NammaYatriClient {
 
   async reverseGeocode(lat: number, lon: number): Promise<NYPlaceDetails> {
     log(`reverseGeocode(${lat},${lon})`);
-    return details(lat, lon, 'Shared pin location', 'mock-pin');
+    // A realistic multi-part getPlaceName result so the pickup label exercises the
+    // building + street + area format (placeId stays 'mock-pin' for the fixtures).
+    return {
+      lat, lon, placeId: 'mock-pin',
+      address: { building: '2', street: '8th Main Road', area: 'Koramangala', city: 'Bengaluru', state: 'Karnataka', country: 'India' },
+    };
   }
 
   async searchRide(_origin: NYPlaceDetails, _destination: NYPlaceDetails): Promise<string> {
