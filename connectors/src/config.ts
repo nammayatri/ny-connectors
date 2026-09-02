@@ -13,6 +13,7 @@ export interface MerchantConfig {
   nyDashboardToken: string;
   nyDashboardMerchant: string;
   nyCity: string;
+  nyFrfsCity: string;    // plain city name for /frfs/* (e.g. "Chennai"), not a std: code
   nyTrackingUrl: string; // template with {rideId} placeholder
 }
 
@@ -40,6 +41,10 @@ export interface Config {
   nyDashboardToken: string;
   nyDashboardMerchant: string;
   nyCity: string;
+  nyFrfsCity: string;
+  frfsEnabled: boolean;
+  frfsMockPayment: boolean;
+  multimodalEnabled: boolean;
 }
 
 // Parses REDIS_CLUSTER_NODES env var: comma-separated host:port pairs.
@@ -91,6 +96,13 @@ export const config: Config = {
   nyDashboardToken: process.env.NY_DASHBOARD_TOKEN || '',
   nyDashboardMerchant: process.env.NY_DASHBOARD_MERCHANT || 'NAMMA_YATRI',
   nyCity: process.env.NY_CITY || 'std:080',
+  // FRFS/multimodal take a city *name* ("Bangalore", "Chennai"), unlike the
+  // dashboard APIs which use a code. Blank means "derive from the user's location".
+  nyFrfsCity: process.env.NY_FRFS_CITY || '',
+  frfsEnabled: process.env.FRFS_ENABLED !== 'false',
+  // Skips real checkout via ?isMockPayment=true. Never enable in production.
+  frfsMockPayment: process.env.FRFS_MOCK_PAYMENT === 'true',
+  multimodalEnabled: process.env.MULTIMODAL_ENABLED !== 'false',
 };
 
 // ---------------------------------------------------------------------------
@@ -125,6 +137,7 @@ function loadMerchants(): void {
       nyDashboardToken: process.env[`${p}NY_DASHBOARD_TOKEN`] || '',
       nyDashboardMerchant: process.env[`${p}NY_DASHBOARD_MERCHANT`] || '',
       nyCity: process.env[`${p}NY_CITY`] || '',
+      nyFrfsCity: process.env[`${p}NY_FRFS_CITY`] || config.nyFrfsCity,
       nyTrackingUrl: process.env[`${p}NY_TRACKING_URL`] || 'https://www.nammayatri.in/u?vp=shareRide&rideId={rideId}',
     };
     if (cfg.whatsappPhoneNumberId) {
@@ -146,6 +159,7 @@ function loadMerchants(): void {
       nyDashboardToken: config.nyDashboardToken,
       nyDashboardMerchant: config.nyDashboardMerchant,
       nyCity: config.nyCity,
+      nyFrfsCity: config.nyFrfsCity,
       nyTrackingUrl: 'https://www.nammayatri.in/u?vp=shareRide&rideId={rideId}',
     };
     merchantsById.set('default', fallback);

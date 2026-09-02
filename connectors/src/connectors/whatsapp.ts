@@ -166,6 +166,64 @@ export class WhatsAppConnector implements Connector {
     }
   }
 
+  /** A tappable link button. WhatsApp reply buttons cannot carry a URL, so this
+   *  uses the dedicated `cta_url` interactive type. `display_text` caps at 20
+   *  characters. */
+  async sendWithUrlButton(
+    chatId: string, text: string, label: string, url: string, merchant?: MerchantConfig,
+  ): Promise<void> {
+    await this.sendWhatsApp(chatId, {
+      messaging_product: 'whatsapp',
+      to: chatId,
+      type: 'interactive',
+      interactive: {
+        type: 'cta_url',
+        body: { text },
+        action: {
+          name: 'cta_url',
+          parameters: { display_text: label.substring(0, 20), url },
+        },
+      },
+    }, merchant);
+  }
+
+  /** Sends a PNG (a ticket QR) as an image message. WhatsApp will not accept
+   *  raw bytes inline, so the file is uploaded to the media endpoint first and
+   *  the returned media id is what gets sent. Captions cap at 1024 characters. */
+  async sendImage(chatId: string, png: Buffer, caption?: string, merchant?: MerchantConfig): Promise<void> {
+    const mediaId = await this.uploadMedia(png, merchant);
+    await this.sendWhatsApp(chatId, {
+      messaging_product: 'whatsapp',
+      to: chatId,
+      type: 'image',
+      image: { id: mediaId, ...(caption ? { caption: caption.substring(0, 1024) } : {}) },
+    }, merchant);
+  }
+
+  private async uploadMedia(png: Buffer, merchant?: MerchantConfig): Promise<string> {
+    const phoneNumberId = merchant?.whatsappPhoneNumberId || config.whatsappPhoneNumberId;
+    const accessToken = merchant?.whatsappAccessToken || config.whatsappAccessToken;
+
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', 'image/png');
+    form.append('file', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'ticket.png');
+
+    const res = await fetch(`https://graph.facebook.com/v18.0/${phoneNumberId}/media`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.error(`[whatsapp] media upload failed (merchant=${merchant?.id || 'default'}): ${res.status} ${err}`);
+      throw new Error(`Media upload failed: ${res.status}`);
+    }
+    const data = await res.json() as any;
+    if (!data?.id) throw new Error('Media upload returned no id');
+    return data.id;
+  }
+
   private async sendWhatsApp(chatId: string, payload: any, merchant?: MerchantConfig): Promise<void> {
     const phoneNumberId = merchant?.whatsappPhoneNumberId || config.whatsappPhoneNumberId;
     const accessToken = merchant?.whatsappAccessToken || config.whatsappAccessToken;

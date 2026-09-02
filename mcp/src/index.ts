@@ -2,6 +2,7 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -21,11 +22,23 @@ const NAMMA_YATRI_API_BASE = process.env.NAMMA_YATRI_API_BASE || "https://api.sa
 const POLLING_INTERVAL_MS = 2000;
 const MAX_POLLING_DURATION_MS = 10000;
 
+// A journey's legs come back unpriced and fill in over a second or two. The
+// app re-calls /initiate every second until every bookable leg has a
+// pricingId, and only then allows booking.
+const JOURNEY_PRICING_INTERVAL_MS = 1000;
+const JOURNEY_PRICING_TIMEOUT_MS = 20000;
+
 // HTTP Server configuration
 const HTTP_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const HTTP_HOST = process.env.HOST || "0.0.0.0";
 const SSE_ENDPOINT = "/sse";
 const MESSAGE_ENDPOINT = "/message";
+
+// Local installs (Claude Desktop / Claude Code) spawn this process and speak
+// JSON-RPC over stdin/stdout. Remote/Docker deployments keep the HTTP+SSE
+// server, which stays the default so existing deployments are unaffected.
+const USE_STDIO =
+  process.argv.includes("--stdio") || process.env.MCP_TRANSPORT === "stdio";
 
 // Token storage configuration
 const TOKEN_STORAGE_DIR = join(homedir(), ".namma-yatri-mcp");
@@ -500,6 +513,173 @@ interface SavedReqLocationsListRes {
 }
 
 // ============================================================================
+// FRFS (metro / bus / suburban rail) + Multimodal Journey Types
+// ============================================================================
+
+type FrfsVehicleType = "METRO" | "BUS" | "SUBWAY";
+
+interface FrfsStationAPI {
+  code: string;
+  name?: string;
+  address?: string;
+  lat?: number;
+  lon?: number;
+  routeCodes?: string[];
+}
+
+interface FrfsQuoteAPI {
+  quoteId: string;
+  price: number;
+  quantity: number;
+  validTill?: string;
+  serviceTierName?: string;
+  vehicleType?: string;
+  routeCode?: string;
+  stations?: FrfsStationAPI[];
+}
+
+interface FrfsSearchResponse {
+  searchId: string;
+  quotes?: FrfsQuoteAPI[];
+}
+
+interface FrfsTicketAPI {
+  ticketNumber: string;
+  qrData: string;
+  status: string;
+  validTill?: string;
+  description?: string;
+}
+
+interface FrfsBookingAPI {
+  bookingId: string;
+  status: string;
+  price: number;
+  quantity: number;
+  city?: string;
+  vehicleType?: string;
+  validTill?: string;
+  createdAt?: string;
+  stations?: FrfsStationAPI[];
+  tickets?: FrfsTicketAPI[];
+  payment?: {
+    status?: string;
+    transactionId?: string;
+    paymentOrder?: {
+      order_id?: string;
+      payment_links?: { web?: string; mobile?: string; deep_link?: string; iframe?: string };
+    };
+  };
+}
+
+interface JourneyLegAPI {
+  journeyLegId?: string;
+  order?: number;
+  /** Absent until the leg's fare has been resolved; booking before it lands
+   *  confirms an unpriced leg. */
+  pricingId?: string;
+  travelMode?: string;
+  mode?: string;
+  bookingAllowed?: boolean;
+  bookingStatus?: string;
+  estimatedDuration?: number;
+  duration?: number;
+  estimatedMinFare?: { amount?: number };
+  estimatedMaxFare?: { amount?: number };
+  legExtraInfo?: { contents?: Record<string, unknown> } & Record<string, unknown>;
+}
+
+interface JourneyDataAPI {
+  journeyId: string;
+  modes?: string[];
+  journeyLegs?: JourneyLegAPI[];
+  totalMinFare?: number;
+  totalMaxFare?: number;
+  duration?: number;
+  distance?: { value?: number };
+}
+
+interface MultimodalSearchResponse {
+  searchId: string;
+  journeys?: JourneyDataAPI[];
+}
+
+interface JourneyInfoResponse {
+  journeyId: string;
+  journeyStatus: string;
+  legs?: JourneyLegAPI[];
+  estimatedMinFare?: { amount?: number };
+  estimatedMaxFare?: { amount?: number };
+  estimatedDuration?: number;
+  unifiedQRV2?: string;
+  paymentOrderShortId?: string;
+}
+
+// --- Tool argument shapes ---
+
+interface SearchTransitStationsArgs {
+  token: string;
+  vehicleType: FrfsVehicleType;
+  searchText: string;
+  city?: string;
+  lat?: number;
+  lon?: number;
+}
+
+interface SearchTransitTicketsArgs {
+  token: string;
+  vehicleType: FrfsVehicleType;
+  fromStationCode: string;
+  toStationCode: string;
+  quantity?: number;
+}
+
+interface ConfirmTransitTicketArgs {
+  token: string;
+  quoteId: string;
+}
+
+interface GetTransitTicketArgs {
+  token: string;
+  bookingId: string;
+}
+
+interface ListTransitTicketsArgs {
+  token: string;
+}
+
+interface CancelTransitTicketArgs {
+  token: string;
+  bookingId: string;
+}
+
+interface SearchJourneysArgs {
+  token: string;
+  originLat: number | string;
+  originLon?: number;
+  originAddress?: Address;
+  destinationLat: number | string;
+  destinationLon?: number;
+  destinationAddress?: Address;
+}
+
+interface BookJourneyArgs {
+  token: string;
+  journeyId: string;
+}
+
+interface GetJourneyArgs {
+  token: string;
+  journeyId: string;
+}
+
+interface CancelJourneyArgs {
+  token: string;
+  journeyId: string;
+  legOrder?: number;
+}
+
+// ============================================================================
 // Namma Yatri MCP Server
 // ============================================================================
 
@@ -964,6 +1144,165 @@ class NammaYatriMCPServer {
             required: ["token", "bookingId"],
           },
         },
+        {
+          name: "search_transit_stations",
+          description:
+            "Searches metro / bus / suburban-rail stations by name, for booking a public transport ticket. Returns station codes needed by search_transit_tickets. CRITICAL: present ALL results to the user as a numbered list and wait for them to choose — do not pick one automatically. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              vehicleType: {
+                type: "string",
+                enum: ["METRO", "BUS", "SUBWAY"],
+                description: "Which transit network to search",
+              },
+              searchText: { type: "string", description: "Station name or part of it" },
+              city: {
+                type: "string",
+                description: "City name such as 'Bangalore' or 'Chennai'. NOTE: this is a plain name, not a std: code. Defaults to Bangalore.",
+              },
+              lat: { type: "number", description: "Optional latitude to centre the search on" },
+              lon: { type: "number", description: "Optional longitude to centre the search on" },
+            },
+            required: ["token", "vehicleType", "searchText"],
+          },
+        },
+        {
+          name: "search_transit_tickets",
+          description:
+            "Gets the fare quote for a public transport journey between two stations. Call search_transit_stations first to get the station codes. Returns a quoteId to pass to confirm_transit_ticket. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              vehicleType: {
+                type: "string",
+                enum: ["METRO", "BUS", "SUBWAY"],
+                description: "Which transit network the journey is on",
+              },
+              fromStationCode: { type: "string", description: "Boarding station code from search_transit_stations" },
+              toStationCode: { type: "string", description: "Destination station code from search_transit_stations" },
+              quantity: { type: "number", description: "Number of tickets (default 1, max 6)" },
+            },
+            required: ["token", "vehicleType", "fromStationCode", "toStationCode"],
+          },
+        },
+        {
+          name: "confirm_transit_ticket",
+          description:
+            "Confirms a transit fare quote and creates the booking plus its payment order. Returns a payment link the user must open to pay, and a bookingId. IMPORTANT: this starts a real payment. Confirm the fare with the user before calling. After the user pays, call get_transit_ticket to collect the ticket. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              quoteId: { type: "string", description: "quoteId from search_transit_tickets" },
+            },
+            required: ["token", "quoteId"],
+          },
+        },
+        {
+          name: "get_transit_ticket",
+          description:
+            "Checks a transit booking and returns its tickets once payment has gone through. Poll this after confirm_transit_ticket until status is CONFIRMED. Each ticket carries a qrData string that the user shows at the gate — present it to them as text; it is the ticket. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              bookingId: { type: "string", description: "bookingId from confirm_transit_ticket" },
+            },
+            required: ["token", "bookingId"],
+          },
+        },
+        {
+          name: "list_transit_tickets",
+          description:
+            "Lists the user's transit ticket bookings, most recent first. Use this to find an existing ticket when the user asks about one they already bought. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+            },
+            required: ["token"],
+          },
+        },
+        {
+          name: "cancel_transit_ticket",
+          description:
+            "Cancels a transit ticket booking if the operator still allows it. Checks eligibility first and reports back if the ticket can no longer be cancelled. Confirm with the user before calling. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              bookingId: { type: "string", description: "bookingId of the ticket to cancel" },
+            },
+            required: ["token", "bookingId"],
+          },
+        },
+        {
+          name: "search_journeys",
+          description:
+            "Plans whole multimodal journeys between two points — sequences of walking, metro, bus and taxi legs — as an alternative to a single taxi ride. Takes the same coordinates as search_ride. CRITICAL: present ALL journey options to the user as a numbered list with their modes, fare and duration, and wait for them to choose. Returns a journeyId for book_journey. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              originLat: {
+                type: ["number", "string"],
+                description: "Origin latitude, or a 'lat,lon' string",
+              },
+              originLon: { type: "number", description: "Origin longitude (omit if originLat is a 'lat,lon' string)" },
+              originAddress: { type: "object", description: "Full address object from get_place_details" },
+              destinationLat: {
+                type: ["number", "string"],
+                description: "Destination latitude, or a 'lat,lon' string",
+              },
+              destinationLon: { type: "number", description: "Destination longitude (omit if destinationLat is a 'lat,lon' string)" },
+              destinationAddress: { type: "object", description: "Full address object from get_place_details" },
+            },
+            required: ["token", "originLat", "destinationLat"],
+          },
+        },
+        {
+          name: "book_journey",
+          description:
+            "Books a multimodal journey: resolves its legs and confirms every leg the backend marks bookable. Returns a payment link when the journey needs paying for. IMPORTANT: this starts a real booking and payment. Confirm the journey and fare with the user before calling. Afterwards, poll get_journey. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              journeyId: { type: "string", description: "journeyId from search_journeys" },
+            },
+            required: ["token", "journeyId"],
+          },
+        },
+        {
+          name: "get_journey",
+          description:
+            "Checks a booked multimodal journey: its status, each leg, any ticket numbers, and the unified QR once issued. Poll this after book_journey until journeyStatus is CONFIRMED. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              journeyId: { type: "string", description: "journeyId from search_journeys" },
+            },
+            required: ["token", "journeyId"],
+          },
+        },
+        {
+          name: "cancel_journey",
+          description:
+            "Cancels a booked multimodal journey, leg by leg. Reports per leg whether it was cancelled and any refund. Pass legOrder to cancel a single leg (leg numbers come from get_journey); omit it to cancel every non-walking leg. Confirm with the user before calling. TOKEN REQUIREMENT: pass the 'token' from get_token.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              token: { type: "string", description: "Obfuscated token from get_token response" },
+              journeyId: { type: "string", description: "journeyId of the journey to cancel" },
+              legOrder: { type: "number", description: "Optional: cancel only this leg (the number shown by get_journey)" },
+            },
+            required: ["token", "journeyId"],
+          },
+        },
       ];
 
       return { tools };
@@ -1041,6 +1380,56 @@ class NammaYatriMCPServer {
           case "get_price_breakdown":
             return await this.handleGetPriceBreakdown(
               args as unknown as GetPriceBreakdownArgs
+            );
+
+          case "search_transit_stations":
+            return await this.handleSearchTransitStations(
+              args as unknown as SearchTransitStationsArgs
+            );
+
+          case "search_transit_tickets":
+            return await this.handleSearchTransitTickets(
+              args as unknown as SearchTransitTicketsArgs
+            );
+
+          case "confirm_transit_ticket":
+            return await this.handleConfirmTransitTicket(
+              args as unknown as ConfirmTransitTicketArgs
+            );
+
+          case "get_transit_ticket":
+            return await this.handleGetTransitTicket(
+              args as unknown as GetTransitTicketArgs
+            );
+
+          case "list_transit_tickets":
+            return await this.handleListTransitTickets(
+              args as unknown as ListTransitTicketsArgs
+            );
+
+          case "cancel_transit_ticket":
+            return await this.handleCancelTransitTicket(
+              args as unknown as CancelTransitTicketArgs
+            );
+
+          case "search_journeys":
+            return await this.handleSearchJourneys(
+              args as unknown as SearchJourneysArgs
+            );
+
+          case "book_journey":
+            return await this.handleBookJourney(
+              args as unknown as BookJourneyArgs
+            );
+
+          case "get_journey":
+            return await this.handleGetJourney(
+              args as unknown as GetJourneyArgs
+            );
+
+          case "cancel_journey":
+            return await this.handleCancelJourney(
+              args as unknown as CancelJourneyArgs
             );
 
           default:
@@ -1170,9 +1559,15 @@ class NammaYatriMCPServer {
       autoCompleteType: "DROP",
       input: args.searchText,
       language: "ENGLISH",
-      location: "12.97413032560963,77.58534937018615", // Hardcoded location
+      // Bias the search around the caller's coordinates when given, so a
+      // lookup outside Bangalore returns local results. Falls back to the
+      // Bangalore city centre when no coordinates are supplied.
+      location:
+        args.sourceLat !== undefined && args.sourceLon !== undefined
+          ? `${args.sourceLat},${args.sourceLon}`
+          : "12.97413032560963,77.58534937018615",
       origin:
-        args.sourceLat && args.sourceLon
+        args.sourceLat !== undefined && args.sourceLon !== undefined
           ? { lat: args.sourceLat, lon: args.sourceLon }
           : undefined,
       radius: 50000,
@@ -2147,6 +2542,638 @@ class NammaYatriMCPServer {
    * Loads saved token from disk if it exists
    * Only loads if token is not already in memory
    */
+  // ============================================================================
+  // FRFS ticketing + Multimodal journeys
+  // ============================================================================
+
+  /** FRFS endpoints take a plain city *name* ("Chennai"), unlike the taxi
+   *  dashboard APIs which use a code such as "std:080". */
+  private static readonly DEFAULT_FRFS_CITY = "Bangalore";
+  private static readonly DEFAULT_FRFS_LOCATION = "12.97413032560963,77.58534937018615";
+
+  private async handleSearchTransitStations(args: SearchTransitStationsArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const city = args.city || NammaYatriMCPServer.DEFAULT_FRFS_CITY;
+    const location =
+      args.lat !== undefined && args.lon !== undefined
+        ? `${args.lat},${args.lon}`
+        : NammaYatriMCPServer.DEFAULT_FRFS_LOCATION;
+
+    const params = new URLSearchParams({
+      input: args.searchText,
+      city,
+      location,
+      vehicleType: args.vehicleType,
+    });
+
+    let stations: FrfsStationAPI[] = [];
+    let autocompleteError: unknown = null;
+    try {
+      const res = await this.makeApiCall<any>(
+        `/frfs/autocomplete?${params}`, "GET", undefined, true, args.token
+      );
+      stations = res?.stations || res?.predictions || (Array.isArray(res) ? res : []);
+    } catch (error) {
+      // An auth failure is not "no results" — surface it so the user re-authenticates.
+      if ((error as any)?.isAuthError) throw error;
+      autocompleteError = error;
+      console.error(`[FRFS] autocomplete failed: ${(error as Error).message}`);
+    }
+
+    // Autocomplete can come back empty on partial names — fall back to the full
+    // city list, filtered here, before telling the user there is no match.
+    if (stations.length === 0) {
+      const listParams = new URLSearchParams({ city, vehicleType: args.vehicleType });
+      try {
+        const all = await this.makeApiCall<any>(
+          `/frfs/stations?${listParams}`, "GET", undefined, true, args.token
+        );
+        const raw: FrfsStationAPI[] = Array.isArray(all) ? all : all?.stations || [];
+        const q = args.searchText.toLowerCase();
+        stations = raw.filter((s) => (s.name || "").toLowerCase().includes(q));
+      } catch (error) {
+        if ((error as any)?.isAuthError) throw error;
+        // Both lookups failed: report why, rather than claiming no station matched.
+        throw autocompleteError ?? error;
+      }
+    }
+
+    stations = stations.filter((s) => !!s.code);
+
+    if (stations.length === 0) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: `No ${args.vehicleType} stations in ${city} matched "${args.searchText}". Ask the user for a different station name, or check the city is right.`,
+        }],
+      };
+    }
+
+    const shown = stations.slice(0, 15);
+    let text = `Found ${shown.length} ${args.vehicleType} station(s) in ${city} matching "${args.searchText}":\n\n`;
+    text += "**IMPORTANT: show these to the user and ask which number they want. Do not pick one yourself.**\n\n";
+    shown.forEach((s, i) => {
+      text += `${i + 1}. ${s.name || s.code}\n`;
+      text += `   Station code: ${s.code}\n`;
+      if (s.address) text += `   ${s.address}\n`;
+      text += "\n";
+    });
+    text += `\nOnce the user picks a boarding and a destination station, call search_transit_tickets with their codes.\n`;
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
+  private async handleSearchTransitTickets(args: SearchTransitTicketsArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const quantity = args.quantity && args.quantity > 0 ? Math.min(args.quantity, 6) : 1;
+
+    if (args.fromStationCode === args.toStationCode) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: "The boarding and destination stations are the same. Ask the user for a different destination.",
+        }],
+      };
+    }
+
+    const params = new URLSearchParams({ vehicleType: args.vehicleType });
+    const search = await this.makeApiCall<FrfsSearchResponse>(
+      `/frfs/search?${params}`,
+      "POST",
+      {
+        fromStationCode: args.fromStationCode,
+        toStationCode: args.toStationCode,
+        quantity,
+        platformType: "APPLICATION",
+      },
+      true,
+      args.token
+    );
+
+    let quotes: FrfsQuoteAPI[] = search.quotes || [];
+
+    // The provider may not have answered inline; poll the quote endpoint the
+    // same way ride estimates are polled.
+    const deadline = Date.now() + MAX_POLLING_DURATION_MS;
+    while (quotes.length === 0 && Date.now() < deadline) {
+      await this.sleep(POLLING_INTERVAL_MS);
+      try {
+        const polled = await this.makeApiCall<any>(
+          `/frfs/search/${search.searchId}/quote`, "GET", undefined, true, args.token
+        );
+        quotes = Array.isArray(polled) ? polled : polled?.quotes || [];
+      } catch (error) {
+        if ((error as any)?.isAuthError) throw error;
+        // 400 while the provider is still responding is expected; keep polling.
+        if ((error as any)?.statusCode !== 400) throw error;
+      }
+    }
+
+    if (quotes.length === 0) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: `No ${args.vehicleType} tickets are available for this route right now (searchId ${search.searchId}). Suggest the user tries again shortly or picks a different route.`,
+        }],
+      };
+    }
+
+    let text = `Fare quote(s) for ${args.fromStationCode} → ${args.toStationCode} (${quantity} ticket(s)):\n\n`;
+    quotes.forEach((q, i) => {
+      text += `${i + 1}. ₹${q.price}`;
+      if (q.serviceTierName) text += ` — ${q.serviceTierName}`;
+      text += `\n   Quote ID: ${q.quoteId}\n   Tickets: ${q.quantity ?? quantity}\n`;
+      if (q.validTill) text += `   Valid till: ${q.validTill}\n`;
+      text += "\n";
+    });
+    text += "**Confirm the fare with the user before calling confirm_transit_ticket — that starts a real payment.**\n";
+    text += `\n\n---\nRaw response data (for reference):\n\`\`\`json\n${JSON.stringify(quotes, null, 2)}\n\`\`\``;
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
+  private paymentLinkOf(booking: FrfsBookingAPI): string | undefined {
+    const links = booking?.payment?.paymentOrder?.payment_links;
+    return links?.web || links?.mobile || undefined;
+  }
+
+  private async handleConfirmTransitTicket(args: ConfirmTransitTicketArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const booking = await this.makeApiCall<FrfsBookingAPI>(
+      `/frfs/quote/${args.quoteId}/confirm`, "POST", undefined, true, args.token
+    );
+
+    const paymentLink = this.paymentLinkOf(booking);
+
+    let text = `Transit booking created.\n\n`;
+    text += `Booking ID: ${booking.bookingId}\n`;
+    text += `Status: ${booking.status}\n`;
+    text += `Amount: ₹${booking.price}\n`;
+    text += `Tickets: ${booking.quantity}\n`;
+    if (booking.payment?.status) text += `Payment status: ${booking.payment.status}\n`;
+
+    if (booking.status === "CONFIRMED") {
+      text += `\nThe booking is already confirmed. Call get_transit_ticket with booking ID ${booking.bookingId} to collect the ticket.\n`;
+    } else if (paymentLink) {
+      text += `\n**Give the user this payment link so they can pay:**\n${paymentLink}\n`;
+      text += `\nAfter they say they have paid, call get_transit_ticket with booking ID ${booking.bookingId} until the status is CONFIRMED.\n`;
+    } else {
+      text += `\nNo payment link came back with this booking, so the user cannot pay from here. Poll get_transit_ticket with booking ID ${booking.bookingId} in case payment is handled elsewhere, and report the problem if it stays unpaid.\n`;
+    }
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
+  private formatBooking(booking: FrfsBookingAPI): string {
+    const from = booking.stations?.[0];
+    const to = booking.stations?.[booking.stations.length - 1];
+
+    let text = `Booking ID: ${booking.bookingId}\n`;
+    text += `Status: ${booking.status}\n`;
+    if (from && to) text += `Route: ${from.name || from.code} → ${to.name || to.code}\n`;
+    text += `Amount: ₹${booking.price} for ${booking.quantity} ticket(s)\n`;
+    if (booking.payment?.status) text += `Payment: ${booking.payment.status}\n`;
+    if (booking.city) text += `City: ${booking.city}\n`;
+
+    const tickets = booking.tickets || [];
+    if (tickets.length > 0) {
+      text += `\nTickets (${tickets.length}):\n`;
+      tickets.forEach((t, i) => {
+        text += `\n${i + 1}. Ticket ${t.ticketNumber} — ${t.status}\n`;
+        if (t.validTill) text += `   Valid till: ${t.validTill}\n`;
+        text += `   QR data: ${t.qrData}\n`;
+      });
+      text += `\n**The QR data above IS the ticket. Show it to the user in full — they need it to scan at the gate.**\n`;
+    }
+    return text;
+  }
+
+  private async handleGetTransitTicket(args: GetTransitTicketArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const booking = await this.makeApiCall<FrfsBookingAPI>(
+      `/frfs/booking/${args.bookingId}/status`, "GET", undefined, true, args.token
+    );
+
+    let text = this.formatBooking(booking);
+
+    if (booking.status !== "CONFIRMED") {
+      const failed = ["FAILED", "CANCELLED", "COUNTER_CANCELLED", "TECHNICAL_CANCEL_REJECTED"];
+      if (failed.includes(booking.status)) {
+        text += `\nThis booking will not complete (status ${booking.status}). Tell the user, and offer to search again.\n`;
+      } else {
+        const link = this.paymentLinkOf(booking);
+        text += `\nNot confirmed yet — payment is probably still pending. Wait a few seconds and call get_transit_ticket again.\n`;
+        if (link) text += `If the user has not paid, the payment link is:\n${link}\n`;
+      }
+    }
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
+  private async handleListTransitTickets(args: ListTransitTicketsArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const res = await this.makeApiCall<any>(
+      "/frfs/booking/list", "GET", undefined, true, args.token
+    );
+    const bookings: FrfsBookingAPI[] = Array.isArray(res) ? res : res?.bookings || [];
+
+    if (bookings.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: "This user has no transit ticket bookings." }],
+      };
+    }
+
+    const sorted = [...bookings].sort(
+      (a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
+    );
+
+    let text = `Found ${sorted.length} transit booking(s), most recent first:\n\n`;
+    sorted.slice(0, 10).forEach((b, i) => {
+      const from = b.stations?.[0];
+      const to = b.stations?.[b.stations.length - 1];
+      text += `${i + 1}. ${from?.name || from?.code || "?"} → ${to?.name || to?.code || "?"}\n`;
+      text += `   Booking ID: ${b.bookingId}\n   Status: ${b.status} · ₹${b.price} · ${b.quantity} ticket(s)\n`;
+      if (b.createdAt) text += `   Booked: ${b.createdAt}\n`;
+      text += "\n";
+    });
+    text += "Call get_transit_ticket with a booking ID to pull up its QR tickets.\n";
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
+  private async handleCancelTransitTicket(args: CancelTransitTicketArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const eligibility = await this.makeApiCall<any>(
+      `/frfs/booking/${args.bookingId}/canCancel`, "POST", undefined, true, args.token
+    ).catch((error) => {
+      if ((error as any)?.isAuthError) throw error;
+      console.error(`[FRFS] canCancel check failed: ${(error as Error).message}`);
+      return null;
+    });
+
+    if (eligibility && eligibility.canCancel === false) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: `This ticket can no longer be cancelled. Tell the user, and mention that transit operators usually close cancellation once the ticket is active or expired.`,
+        }],
+      };
+    }
+
+    await this.makeApiCall<any>(
+      `/frfs/booking/${args.bookingId}/cancel`, "POST", undefined, true, args.token
+    );
+
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Ticket ${args.bookingId} cancelled. Any refund goes back to the original payment method, on the operator's timeline.`,
+      }],
+    };
+  }
+
+  // --- Multimodal journeys ---
+
+  private legMode(leg: JourneyLegAPI): string {
+    return leg.travelMode || leg.mode || "Unknown";
+  }
+
+  /** A leg's bookingStatus arrives as a tagged union — {tag, contents} — e.g.
+   *  {"tag":"TaxiBooking","contents":"CONFIRMED"}. Printing it directly gives
+   *  "[object Object]", so unwrap it into "TaxiBooking: CONFIRMED". */
+  private formatLegBookingStatus(raw: unknown): string | undefined {
+    if (!raw) return undefined;
+    if (typeof raw === "string") return raw;
+    const bs = raw as Record<string, unknown>;
+    const tag = (bs.tag ?? bs.TAG) as string | undefined;
+    const contents = (bs.contents ?? bs._0) as unknown;
+    if (!tag) return undefined;
+    return typeof contents === "string" ? `${tag}: ${contents}` : tag;
+  }
+
+  /** Pulls the human-readable detail out of a leg's mode-specific extra info:
+   *  driver and OTP for a taxi, stops and ticket numbers for bus/metro. */
+  private legDetailLines(leg: JourneyLegAPI): string[] {
+    const info = ((leg.legExtraInfo as any)?.contents ?? leg.legExtraInfo ?? {}) as Record<string, any>;
+    const lines: string[] = [];
+
+    const from = info.origin?.name || info.originStop?.name || info.fromStation?.name;
+    const to = info.destination?.name || info.destinationStop?.name || info.toStation?.name;
+    if (from || to) lines.push(`  ${from || "?"} → ${to || "?"}`);
+
+    // Taxi
+    if (info.driverName) lines.push(`  Driver: ${info.driverName}`);
+    if (info.vehicleNumber) lines.push(`  Vehicle: ${info.vehicleNumber}`);
+    if (info.driverMobileNumber || info.exoPhoneNumber) {
+      lines.push(`  Driver phone: ${info.driverMobileNumber || info.exoPhoneNumber}`);
+    }
+    if (info.otp) lines.push(`  Ride OTP: ${info.otp}`);
+    if (info.serviceTierName) lines.push(`  Vehicle type: ${info.serviceTierName}`);
+
+    // Bus / metro tickets
+    if (Array.isArray(info.ticketNo) && info.ticketNo.length > 0) {
+      lines.push(`  Tickets: ${info.ticketNo.join(", ")}`);
+    }
+    if (Array.isArray(info.tickets) && info.tickets.length > 0) {
+      lines.push(`  QR data: ${info.tickets.join(" | ")}`);
+    }
+    if (info.routeName || info.routeCode) {
+      lines.push(`  Route: ${info.routeName || info.routeCode}`);
+    }
+    return lines;
+  }
+
+  private async handleSearchJourneys(args: SearchJourneysArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const originCoords = this.parseCoordinates(args.originLat, args.originLon);
+    const destCoords = this.parseCoordinates(args.destinationLat, args.destinationLon);
+
+    const mkAddress = (given: Address | undefined, lat: number, lon: number): Address =>
+      given
+        ? {
+            area: given.area || "",
+            city: given.city || "",
+            country: given.country || "",
+            building: given.building || "",
+            placeId: given.placeId || "",
+            state: given.state || "",
+            ...(given.street && { street: given.street }),
+          }
+        : this.createAddressFromCoordinates(lat, lon);
+
+    const request = {
+      contents: {
+        origin: {
+          gps: { lat: originCoords.lat, lon: originCoords.lon },
+          address: mkAddress(args.originAddress, originCoords.lat, originCoords.lon),
+        },
+        destination: {
+          gps: { lat: destCoords.lat, lon: destCoords.lon },
+          address: mkAddress(args.destinationAddress, destCoords.lat, destCoords.lon),
+        },
+        placeNameSource: "API_MCP",
+        platformType: "APPLICATION",
+        quotesUnifiedFlow: true,
+      },
+      fareProductType: "ONE_WAY",
+    };
+
+    // The app sends this header to have the search open a journey.
+    const res = await this.makeApiCall<MultimodalSearchResponse>(
+      "/multimodalSearch", "POST", request, true, args.token, { initateJourney: "true" }
+    );
+
+    // A walk-only journey is not something we can book.
+    const journeys = (res.journeys || []).filter(
+      (j) => (j.modes || []).some((m) => m !== "Walk")
+    );
+
+    if (journeys.length === 0) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: "No public transport journeys were found for this route. Suggest the user books a taxi with search_ride instead.",
+        }],
+      };
+    }
+
+    let text = `Found ${journeys.length} journey option(s):\n\n`;
+    text += "**IMPORTANT: show all of these to the user and ask which number they want. Do not pick one yourself.**\n\n";
+
+    journeys.forEach((j, i) => {
+      const fare = j.totalMinFare === j.totalMaxFare
+        ? `₹${j.totalMinFare}`
+        : `₹${j.totalMinFare}–₹${j.totalMaxFare}`;
+      const mins = j.duration ? `${Math.round(j.duration / 60)} min` : "duration unknown";
+      text += `${i + 1}. ${(j.modes || []).join(" → ")}\n`;
+      text += `   ${fare} · ~${mins}\n`;
+      text += `   Journey ID: ${j.journeyId}\n`;
+      (j.journeyLegs || []).forEach((leg) => {
+        const d = leg.duration ?? leg.estimatedDuration;
+        text += `     • ${this.legMode(leg)}${d ? ` — ${Math.round(d / 60)} min` : ""}\n`;
+      });
+      text += "\n";
+    });
+    text += "Once the user picks one, call book_journey with its Journey ID.\n";
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
+  private async handleBookJourney(args: BookJourneyArgs) {
+    this.ensureAuthenticated(args.token);
+
+    // Resolve the journey into concrete legs. Legs arrive unpriced, so re-call
+    // initiate until every bookable one has a pricingId — confirming before
+    // that books a journey whose fare has not settled.
+    const initiate = () => this.makeApiCall<JourneyInfoResponse>(
+      `/multimodal/${args.journeyId}/initiate`, "POST", undefined, true, args.token
+    );
+    const unpricedLegs = (i: JourneyInfoResponse) =>
+      (i.legs || []).filter((l) => l.bookingAllowed && !l.pricingId);
+
+    let info = await initiate();
+    const pricingDeadline = Date.now() + JOURNEY_PRICING_TIMEOUT_MS;
+    while (unpricedLegs(info).length > 0 && Date.now() < pricingDeadline) {
+      await this.sleep(JOURNEY_PRICING_INTERVAL_MS);
+      info = await initiate();
+    }
+
+    const stillUnpriced = unpricedLegs(info);
+    if (stillUnpriced.length > 0) {
+      const orders = stillUnpriced.map((l) => l.order ?? "?").join(", ");
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Journey ${args.journeyId} is not ready to book: leg(s) ${orders} still have no fare after ${JOURNEY_PRICING_TIMEOUT_MS / 1000}s.\n\nNothing was booked and nothing was charged. Tell the user the fare did not settle, and offer to try book_journey again in a moment or pick a different journey.`,
+        }],
+      };
+    }
+
+    // ...then book every leg the backend says is bookable, skipping the rest
+    // (walking legs, and anything it flagged).
+    const elements = (info.legs || []).map((leg) => ({
+      journeyLegOrder: leg.order ?? 0,
+      skipBooking: !leg.bookingAllowed,
+    }));
+
+    await this.makeApiCall<any>(
+      `/multimodal/${args.journeyId}/confirm`,
+      "POST",
+      { journeyConfirmReqElements: elements },
+      true,
+      args.token
+    );
+
+    const payment = await this.makeApiCall<any>(
+      `/multimodal/${args.journeyId}/booking/paymentStatus`, "GET", undefined, true, args.token
+    ).catch((error) => {
+      if ((error as any)?.isAuthError) throw error;
+      console.error(`[journey] payment status unavailable: ${(error as Error).message}`);
+      return null;
+    });
+
+    const paymentLink =
+      payment?.paymentOrder?.payment_links?.web ||
+      payment?.paymentOrder?.payment_links?.mobile;
+
+    const bookable = elements.filter((e) => !e.skipBooking).length;
+    let text = `Journey ${args.journeyId} confirmed for booking.\n\n`;
+    text += `Legs: ${elements.length} (${bookable} being booked, ${elements.length - bookable} skipped as walking or unbookable)\n`;
+    if (payment?.status) text += `Payment status: ${payment.status}\n`;
+
+    if (paymentLink) {
+      text += `\n**Give the user this payment link so they can pay:**\n${paymentLink}\n`;
+    }
+    text += `\nCall get_journey with journey ID ${args.journeyId} until journeyStatus is CONFIRMED, then show the user their tickets.\n`;
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
+  private async handleGetJourney(args: GetJourneyArgs) {
+    this.ensureAuthenticated(args.token);
+
+    const info = await this.makeApiCall<JourneyInfoResponse>(
+      `/multimodal/${args.journeyId}/booking/info`, "GET", undefined, true, args.token
+    );
+
+    let text = `Journey ID: ${info.journeyId}\nStatus: ${info.journeyStatus}\n`;
+    if (info.estimatedMinFare?.amount !== undefined) {
+      const min = info.estimatedMinFare.amount;
+      const max = info.estimatedMaxFare?.amount ?? min;
+      text += `Fare: ${min === max ? `₹${min}` : `₹${min}–₹${max}`}\n`;
+    }
+
+    const legs = [...(info.legs || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    if (legs.length > 0) {
+      text += `\nLegs:\n`;
+      legs.forEach((leg) => {
+        const d = leg.estimatedDuration ?? leg.duration;
+        const status = this.formatLegBookingStatus(leg.bookingStatus);
+        text += `• [leg ${leg.order ?? "?"}] ${this.legMode(leg)}${d ? ` — ${Math.round(d / 60)} min` : ""}`;
+        if (status) text += ` · ${status}`;
+        text += "\n";
+        for (const detail of this.legDetailLines(leg)) text += `${detail}\n`;
+      });
+      text += `\nThe leg numbers above are what cancel_journey takes as legOrder.\n`;
+    }
+
+    if (info.unifiedQRV2) {
+      text += `\nUnified QR data: ${info.unifiedQRV2}\n`;
+      text += `**This QR data IS the journey ticket. Show it to the user in full.**\n`;
+    }
+
+    const taxiLegs = legs.filter((l) => this.legMode(l) === "Taxi");
+    const awaitingDriver = taxiLegs.some((l) => {
+      const st = this.formatLegBookingStatus(l.bookingStatus) || "";
+      return st.startsWith("TaxiEstimate") || st.startsWith("Initial");
+    });
+
+    if (info.journeyStatus !== "CONFIRMED" && info.journeyStatus !== "INPROGRESS") {
+      text += `\nNot confirmed yet — if payment is still pending, wait a few seconds and call get_journey again.\n`;
+    } else if (awaitingDriver) {
+      text += `\nA taxi leg is still waiting on a driver. A taxi leg produces no ticket or QR — it is confirmed once its status reads TaxiBooking or TaxiRide and driver details appear above. Keep polling get_journey.\n`;
+    }
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
+  /** Cancels a journey leg by leg.
+   *
+   *  There is a POST /multimodal/journey/{id}/cancel endpoint in the API, but
+   *  the backend answers it with 400 "Not implemented" and the mobile app never
+   *  calls it. The app cancels per leg instead: softCancel to open the request,
+   *  cancel/status to learn the refund and whether it is allowed, then cancel.
+   */
+  private async cancelOneLeg(
+    token: string, journeyId: string, legOrder: number
+  ): Promise<string> {
+    const base = `/multimodal/${journeyId}/order/${legOrder}`;
+
+    try {
+      await this.makeApiCall<any>(`${base}/softCancel`, "POST", undefined, true, token);
+    } catch (error) {
+      if ((error as any)?.isAuthError) throw error;
+      // Some leg types have nothing to soft-cancel; the hard cancel still applies.
+      console.error(`[journey] leg ${legOrder} softCancel: ${(error as Error).message}`);
+    }
+
+    let detail = "";
+    try {
+      const status = await this.makeApiCall<any>(
+        `${base}/cancel/status`, "GET", undefined, true, token
+      );
+      if (status?.isCancellable === false) {
+        return `leg ${legOrder}: cannot be cancelled (booking status ${status?.bookingStatus ?? "unknown"})`;
+      }
+      const bits: string[] = [];
+      if (status?.refundAmount !== undefined && status.refundAmount !== null) {
+        bits.push(`refund ₹${status.refundAmount}`);
+      }
+      if (status?.cancellationCharges) bits.push(`charges ₹${status.cancellationCharges}`);
+      if (bits.length) detail = ` (${bits.join(", ")})`;
+    } catch (error) {
+      if ((error as any)?.isAuthError) throw error;
+      console.error(`[journey] leg ${legOrder} cancel/status: ${(error as Error).message}`);
+    }
+
+    await this.makeApiCall<any>(`${base}/cancel`, "POST", undefined, true, token);
+    return `leg ${legOrder}: cancelled${detail}`;
+  }
+
+  private async handleCancelJourney(args: CancelJourneyArgs) {
+    this.ensureAuthenticated(args.token);
+
+    // Work out which legs to cancel.
+    let orders: number[];
+    if (args.legOrder !== undefined) {
+      orders = [args.legOrder];
+    } else {
+      const info = await this.makeApiCall<JourneyInfoResponse>(
+        `/multimodal/${args.journeyId}/booking/info`, "GET", undefined, true, args.token
+      );
+      orders = (info.legs || [])
+        .filter((l) => this.legMode(l) !== "Walk")
+        .map((l) => l.order)
+        .filter((o): o is number => typeof o === "number")
+        .sort((a, b) => a - b);
+    }
+
+    if (orders.length === 0) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Journey ${args.journeyId} has no cancellable legs — walking legs cannot be cancelled.`,
+        }],
+      };
+    }
+
+    const results: string[] = [];
+    for (const order of orders) {
+      try {
+        results.push(await this.cancelOneLeg(args.token, args.journeyId, order));
+      } catch (error) {
+        if ((error as any)?.isAuthError) throw error;
+        results.push(`leg ${order}: FAILED — ${(error as Error).message}`);
+      }
+    }
+
+    const failed = results.filter((r) => r.includes("FAILED") || r.includes("cannot be cancelled"));
+    let text = `Cancellation for journey ${args.journeyId}:\n\n`;
+    results.forEach((r) => { text += `• ${r}\n`; });
+    text += failed.length === 0
+      ? `\nAll legs cancelled. Any refund goes back to the original payment method on the operator's timeline.\n`
+      : `\n${failed.length} of ${results.length} leg(s) could not be cancelled — tell the user which, and why.\n`;
+
+    return { content: [{ type: "text" as const, text }] };
+  }
+
   private async loadToken(): Promise<void> {
     // Note: Session-based auth is used. Token loading from disk is deprecated.
     console.error(`[TOKEN] Note: Session-based auth is used. Token loading from disk is deprecated.`);
@@ -2171,7 +3198,8 @@ class NammaYatriMCPServer {
     method: "GET" | "POST" = "GET",
     body?: unknown,
     requireAuth: boolean = true,
-    obfuscatedToken?: string
+    obfuscatedToken?: string,
+    extraHeaders?: Record<string, string>
   ): Promise<T> {
     const url = `${NAMMA_YATRI_API_BASE}${endpoint}`;
     
@@ -2191,6 +3219,10 @@ class NammaYatriMCPServer {
       console.error(`[API] Using authentication token: ${realToken.substring(0, 20)}...`);
     } else if (!requireAuth) {
       console.error(`[API] No authentication required for this endpoint`);
+    }
+
+    if (extraHeaders) {
+      Object.assign(headers, extraHeaders);
     }
 
     const options: RequestInit = {
@@ -2239,7 +3271,13 @@ class NammaYatriMCPServer {
       throw error;
     }
 
-    return (await response.json()) as T;
+    const text = await response.text();
+    if (!text) return undefined as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as unknown as T;
+    }
   }
 
   private async pollSearchResults(
@@ -2281,6 +3319,16 @@ class NammaYatriMCPServer {
   }
 
   async start(): Promise<void> {
+    if (USE_STDIO) {
+      // Every log in this file goes to stderr, which keeps stdout clean for
+      // the protocol stream.
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
+      console.error("[stdio] Namma Yatri MCP Server connected over stdio");
+      console.error(`[stdio] API base: ${NAMMA_YATRI_API_BASE}`);
+      return;
+    }
+
     const httpServer = createServer(async (req, res) => {
       const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
       
@@ -2561,8 +3609,7 @@ class NammaYatriMCPServer {
       const realToken = this.deobfuscateTokenSimple(obfuscatedToken);
       // Create session if deobfuscation succeeds
       this.createSession(obfuscatedToken, realToken);
-      console.log("Real token:", realToken);
-      console.log("Obfuscated token:", obfuscatedToken);
+      console.error(`[TOKEN] Rebuilt session from obfuscated token (len=${obfuscatedToken.length})`);
       return realToken;
     } catch (error) {
       console.error("Error deobfuscating token:", error);

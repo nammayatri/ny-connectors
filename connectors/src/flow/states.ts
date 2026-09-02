@@ -1,4 +1,5 @@
 import { NYPlaceDetails, NYEstimate, NYSavedLocation } from '../ny';
+import { FrfsQuote, FrfsStation, FrfsVehicleType, Journey } from '../ny';
 import { SupportedLanguage } from '../i18n';
 
 export type FlowState =
@@ -20,7 +21,19 @@ export type FlowState =
   | 'CONFIRMING_ADD_LOCATION'
   | 'CHOOSING_LANGUAGE'
   | 'AWAITING_OTP'
-  | 'AWAITING_NAME';
+  | 'AWAITING_NAME'
+  // --- FRFS ticketing (metro / bus / subway) ---
+  | 'CHOOSING_TRANSIT_MODE'
+  | 'AWAITING_TRANSIT_ORIGIN'
+  | 'AWAITING_TRANSIT_DEST'
+  | 'CHOOSING_TICKET_QUANTITY'
+  | 'CONFIRMING_TICKET'
+  | 'AWAITING_TICKET_PAYMENT'
+  | 'SHOWING_TICKETS'
+  // --- Multimodal journeys ---
+  | 'SHOWING_JOURNEYS'
+  | 'AWAITING_JOURNEY_PAYMENT'
+  | 'TRACKING_JOURNEY';
 
 export interface FlowContext {
   state: FlowState;
@@ -45,7 +58,23 @@ export interface FlowContext {
   addLocationOptions?: { description: string; placeId: string }[];
   language?: SupportedLanguage;
   authId?: string;             // from POST /v2/auth during registration
-  pendingAction?: 'status';    // deferred action to run after authentication
+  pendingAction?: 'status' | 'transit';  // deferred action to run after authentication
+
+  // --- FRFS ticketing ---
+  transitMode?: FrfsVehicleType;             // METRO | BUS | SUBWAY
+  transitFrom?: FrfsStation;
+  transitTo?: FrfsStation;
+  transitStationOptions?: FrfsStation[];     // pending pick-list while choosing a station
+  transitQuantity?: number;
+  transitSearchId?: string;
+  transitQuotes?: FrfsQuote[];
+  transitQuoteId?: string;
+  transitBookingId?: string;
+
+  // --- Multimodal journeys ---
+  journeySearchId?: string;
+  journeys?: Journey[];
+  activeJourneyId?: string;
 }
 
 export const INITIAL_CONTEXT: FlowContext = {

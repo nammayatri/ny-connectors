@@ -9,11 +9,16 @@ const server = app.listen(config.port, () => {
   console.log(`[gateway] Session TTL: ${config.sessionTtlSeconds}s`);
   console.log(`[gateway] Connectors: telegram, whatsapp, slack`);
   console.log(`[gateway] Dashboard URL: ${config.nyDashboardUrl}`);
+  console.log(`[gateway] FRFS ticketing: ${config.frfsEnabled ? 'on' : 'off'} (city=${config.nyFrfsCity || 'auto'})`);
+  console.log(`[gateway] Multimodal journeys: ${config.multimodalEnabled ? 'on' : 'off'}`);
+  if (config.frfsMockPayment) {
+    console.warn('[gateway] ⚠️  FRFS_MOCK_PAYMENT=true — tickets are confirmed without real payment. Do not use in production.');
+  }
 
   const merchants = getAllMerchants();
   console.log(`[gateway] Merchants: ${merchants.length}`);
   for (const m of merchants) {
-    console.log(`[gateway]   ${m.id}: WA=${m.whatsappPhoneNumberId} merchant=${m.nyDashboardMerchant} city=${m.nyCity} dashToken=${m.nyDashboardToken ? 'set' : 'NOT SET'}`);
+    console.log(`[gateway]   ${m.id}: WA=${m.whatsappPhoneNumberId} merchant=${m.nyDashboardMerchant} city=${m.nyCity} frfsCity=${m.nyFrfsCity || 'auto'} dashToken=${m.nyDashboardToken ? 'set' : 'NOT SET'}`);
   }
 });
 

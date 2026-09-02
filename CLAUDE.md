@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ny-connectors is a multi-interface toolkit for booking rides via Namma Yatri APIs. It provides three ways to interact with the platform:
 
-1. **MCP Server** (`mcp/`) — TypeScript MCP server exposing 9 tools for AI assistants
+1. **MCP Server** (`mcp/`) — TypeScript MCP server exposing 25 tools for AI assistants (taxi booking, FRFS metro/bus ticketing, multimodal journeys)
 2. **CLI** (`cli/`) — Bash CLI tool (`nycli`) for terminal-based ride booking
 3. **Skill** (`skill.md`) — Curl-based skill file for LLM tools that don't support MCP (e.g., openClaw)
 
