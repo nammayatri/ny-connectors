@@ -154,4 +154,55 @@ export interface LanguageStrings {
   sessionExpired: string;
   error: (msg: string) => string;
   rideBeingBooked: string;
+
+  // Transit ticketing (metro / bus / subway)
+  transitTicketButton: string;
+  chooseTransitMode: string;
+  transitMetro: string;
+  transitBus: string;
+  transitSubway: string;
+  transitUnavailable: string;
+  enterBoardingStation: (mode: string) => string;
+  enterDropStation: (mode: string) => string;
+  selectBoardingStation: string;
+  selectDropStation: string;
+  noStationsFound: (query: string) => string;
+  sameStationChosen: string;
+  chooseQuantity: string;
+  ticketsCount: (n: number) => string;
+  invalidQuantity: (max: number) => string;
+  searchingTickets: string;
+  noTicketsAvailable: string;
+  ticketSummary: (from: string, to: string, fare: number, qty: number) => string;
+  payNow: (fare: number) => string;
+  payPrompt: string;
+  awaitingPayment: string;
+  ticketConfirmed: string;
+  ticketLabel: (ticketNo: string) => string;
+  ticketValidTill: (till: string) => string;
+  ticketQrCaption: (from: string, to: string) => string;
+  ticketQrFallback: string;
+  paymentFailed: string;
+  paymentTimedOut: string;
+  myTicketsButton: string;
+  noActiveTickets: string;
+  cancelTicket: string;
+  ticketCancelled: string;
+  ticketCannotCancel: string;
+
+  // Multimodal journeys
+  journeyOptionsHeader: string;
+  transitOptionsLabel: string;
+  noJourneysFound: string;
+  bookJourney: string;
+  bookingJourney: string;
+  journeyConfirmed: string;
+  journeyLegsHeader: string;
+  journeyCancelled: string;
+  cancelJourney: string;
+  modeWalk: string;
+  modeMetro: string;
+  modeBus: string;
+  modeTaxi: string;
+  modeSubway: string;
 }

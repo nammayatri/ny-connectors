@@ -231,6 +231,22 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `cancel_search` | Cancel active search |
 | `fetch_status` | Check ride booking status |
 | `get_saved_locations` | List saved locations |
+| `get_cancellation_reasons` | List valid cancellation reasons |
+| `cancel_booking` | Cancel a confirmed booking |
+| `get_booking_details` | Fetch details of a booking |
+| `get_ride_status` | Check the status of a ride |
+| `post_ride_tip` | Tip after a completed ride |
+| `get_price_breakdown` | Itemised fare breakdown |
+| `search_transit_stations` | Find metro/bus/suburban stations by name |
+| `search_transit_tickets` | Fare quote between two stations |
+| `confirm_transit_ticket` | Confirm a quote, returns a payment link |
+| `get_transit_ticket` | Booking status and QR tickets |
+| `list_transit_tickets` | List the user's transit bookings |
+| `cancel_transit_ticket` | Cancel a transit ticket |
+| `search_journeys` | Plan multimodal journeys (walk/metro/bus/taxi) |
+| `book_journey` | Book a journey's bookable legs |
+| `get_journey` | Journey status, legs and unified QR |
+| `cancel_journey` | Cancel a booked journey |
 
 ### Environment Variables (MCP)
 

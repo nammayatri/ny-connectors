@@ -156,6 +156,14 @@ export class TelegramConnector implements Connector {
     });
   }
 
+  /** A tappable link button (used for the payment hand-off). Telegram inline
+   *  buttons take a `url` in place of `callback_data`. */
+  async sendWithUrlButton(chatId: string, text: string, label: string, url: string): Promise<void> {
+    await this.sendTelegramMessage(chatId, text, {
+      inline_keyboard: [[{ text: label, url }]],
+    });
+  }
+
   async requestContact(chatId: string, text: string): Promise<void> {
     const url = `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`;
     const res = await fetch(url, {
@@ -188,6 +196,22 @@ export class TelegramConnector implements Connector {
         reply_markup: { remove_keyboard: true },
       }),
     });
+  }
+
+  /** Sends a PNG (a ticket QR) as a photo message. Telegram caps captions at
+   *  1024 characters. */
+  async sendPhoto(chatId: string, png: Buffer, caption?: string): Promise<void> {
+    const url = `https://api.telegram.org/bot${config.telegramBotToken}/sendPhoto`;
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    if (caption) form.append('caption', caption.substring(0, 1024));
+    form.append('photo', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'ticket.png');
+    const res = await fetch(url, { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.error(`[telegram] sendPhoto failed: ${res.status} ${err}`);
+      throw new Error(`sendPhoto failed: ${res.status}`);
+    }
   }
 
   async answerCallback(callbackQueryId: string): Promise<void> {

@@ -1,5 +1,18 @@
 import { FlowContext, INITIAL_CONTEXT } from './states';
 import { NammaYatriClient, NYPlaceDetails, NYRideHistoryItem } from '../ny';
+import {
+  FrfsClient,
+  FrfsBooking,
+  FrfsStation,
+  FrfsVehicleType,
+  Journey,
+  JourneyInfo,
+  FRFS_TERMINAL_OK,
+  FRFS_TERMINAL_FAIL,
+  isFrfsVehicleType,
+  unpricedLegs,
+} from '../ny';
+import { renderQrPng } from '../qr';
 import { SessionManager } from '../session/manager';
 import { MemorySessionManager } from '../session/memory-store';
 import { TokenStore } from '../session/token-store';
@@ -9,7 +22,7 @@ import { TelegramConnector } from '../connectors/telegram';
 import { WhatsAppConnector } from '../connectors/whatsapp';
 import { SlackConnector } from '../connectors/slack';
 import { config, MerchantConfig } from '../config';
-import { t, getAllLanguages, isValidLanguage, SupportedLanguage } from '../i18n';
+import { t, getAllLanguages, isValidLanguage, SupportedLanguage, LanguageStrings } from '../i18n';
 
 type AnySessionManager = SessionManager | MemorySessionManager;
 
@@ -32,6 +45,26 @@ function formatSavedAddress(loc: Record<string, any>): string | undefined {
 const POLLING_MAX_ITERATIONS = 60;       // 60 × 3s = 3 min
 const POLLING_NOTIFY_EVERY = 10;         // notify every 10 × 3s = 30s
 
+// Ticket/journey payment happens outside the chat, so we poll the booking
+// until the gateway reports back. 60 × 3s = 3 min, which comfortably covers a
+// UPI round trip without holding the session open forever.
+// Transit operators cap tickets per booking; 6 matches the app's picker.
+const MAX_TICKETS = 6;
+
+const TICKET_POLL_ATTEMPTS = 60;
+const TICKET_POLL_INTERVAL_MS = 3000;
+
+/** Renders an API timestamp as a local time for ticket validity lines. */
+function formatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString('en-IN', {
+      hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -41,6 +74,17 @@ export class FlowEngine {
 
   constructor(private sessionManager: AnySessionManager, tokenStore?: TokenStore) {
     this.tokenStore = tokenStore ?? createTokenStore();
+  }
+
+  /** The home menu. Transit ticketing is offered only when FRFS is enabled. */
+  private menuButtons(s: LanguageStrings, includeLanguage = false): { text: string; data: string }[][] {
+    const row = [
+      { text: s.bookARide, data: 'book' },
+      { text: s.trackRide, data: 'status' },
+    ];
+    if (config.frfsEnabled) row.push({ text: s.transitTicketButton, data: 'transit' });
+    if (includeLanguage) row.push({ text: s.chooseLanguage, data: 'choose_language' });
+    return [row];
   }
 
   async handleMessage(message: CommandMessage, connector: Connector): Promise<void> {
@@ -113,10 +157,7 @@ export class FlowEngine {
           const newS = t(langCode);
           await replyWithButtons(
             newS.languageUpdated(newS.nativeLanguageName) + newS.whatToDo,
-            [[
-              { text: newS.bookARide, data: 'book' },
-              { text: newS.trackRide, data: 'status' },
-            ]]
+            this.menuButtons(newS),
           );
         }
         return;
@@ -146,13 +187,7 @@ export class FlowEngine {
 
       if (input === 'main_menu') {
         await this.resetContext(message);
-        await replyWithButtons(
-          s.welcomeBack,
-          [[
-            { text: s.bookARide, data: 'book' },
-            { text: s.trackRide, data: 'status' },
-          ]]
-        );
+        await replyWithButtons(s.welcomeBack, this.menuButtons(s));
         return;
       }
 
@@ -334,6 +369,65 @@ export class FlowEngine {
         return;
       }
 
+      // --- Transit ticketing & multimodal journeys (available from any state) ---
+      if (input === 'transit') {
+        if (!config.frfsEnabled) {
+          await reply(s.transitUnavailable);
+          return;
+        }
+        await this.startTransitBooking(ctx, message, reply, replyWithButtons, connector);
+        return;
+      }
+
+      if (input.startsWith('transit_mode:')) {
+        await this.handleChoosingTransitMode(ctx, input, message, reply, replyWithButtons);
+        return;
+      }
+
+      if (input === 'ticket_pay' && ctx.nyToken && ctx.transitQuoteId) {
+        await this.bookTransitTicket(ctx, message, reply, replyWithButtons, connector!);
+        return;
+      }
+
+      if (input.startsWith('qty:') && ctx.state === 'CHOOSING_TICKET_QUANTITY') {
+        await this.handleChoosingQuantity(ctx, input, message, reply, replyWithButtons);
+        return;
+      }
+
+      if (input === 'my_tickets' && ctx.nyToken) {
+        await this.handleMyTickets(ctx, message, reply, replyWithButtons, connector!);
+        return;
+      }
+
+      if (input.startsWith('ticket_cancel:') && ctx.nyToken) {
+        const bookingId = input.slice('ticket_cancel:'.length);
+        await this.cancelTransitTicket(ctx, bookingId, message, reply, replyWithButtons);
+        return;
+      }
+
+      // The taxi estimates and the journey list live in two separate messages,
+      // so a user can tap an estimate after opening journeys. Route on what the
+      // tap refers to rather than on the state we happen to be in.
+      if (/^estimate:\d+$/.test(input) && ctx.estimates?.length && ctx.state !== 'SHOWING_ESTIMATES') {
+        await this.handleShowingEstimates(ctx, input, message, reply, replyWithButtons, connector!);
+        return;
+      }
+
+      if (input === 'show_journeys' && ctx.nyToken && config.multimodalEnabled) {
+        await this.showJourneys(ctx, message, reply, replyWithButtons);
+        return;
+      }
+
+      if (input.startsWith('journey:') && ctx.nyToken) {
+        await this.handleShowingJourneys(ctx, input, message, reply, replyWithButtons, connector!);
+        return;
+      }
+
+      if (input === 'journey_cancel' && ctx.nyToken && ctx.activeJourneyId) {
+        await this.cancelJourney(ctx, message, replyWithButtons);
+        return;
+      }
+
       // Handle quick route from any state
       const quickMatch = input.match(/^quick:(.+)->(.+)$/);
       if (quickMatch && ctx.nyToken) {
@@ -399,6 +493,49 @@ export class FlowEngine {
         case 'AWAITING_NAME':
           await this.handleAwaitingName(ctx, input, message, reply, replyWithButtons);
           break;
+        case 'CHOOSING_TRANSIT_MODE':
+          await this.handleChoosingTransitMode(ctx, input, message, reply, replyWithButtons);
+          break;
+        case 'AWAITING_TRANSIT_ORIGIN':
+          await this.handleAwaitingTransitStation(ctx, input, message, 'from', reply, replyWithButtons);
+          break;
+        case 'AWAITING_TRANSIT_DEST':
+          await this.handleAwaitingTransitStation(ctx, input, message, 'to', reply, replyWithButtons);
+          break;
+        case 'CHOOSING_TICKET_QUANTITY':
+          await this.handleChoosingQuantity(ctx, input, message, reply, replyWithButtons);
+          break;
+        case 'CONFIRMING_TICKET': {
+          const quote = ctx.transitQuotes?.[0];
+          if (quote && ctx.transitFrom && ctx.transitTo) {
+            await replyWithButtons(
+              s.ticketSummary(ctx.transitFrom.name, ctx.transitTo.name, quote.price, quote.quantity),
+              [
+                [{ text: s.payNow(quote.price), data: 'ticket_pay' }],
+                [{ text: s.mainMenu, data: 'main_menu' }],
+              ],
+            );
+          } else {
+            await reply(s.somethingWentWrong);
+          }
+          break;
+        }
+        case 'AWAITING_TICKET_PAYMENT':
+        case 'AWAITING_JOURNEY_PAYMENT':
+          await reply(s.awaitingPayment);
+          break;
+        case 'SHOWING_TICKETS':
+          await this.handleMyTickets(ctx, message, reply, replyWithButtons, connector!);
+          break;
+        case 'SHOWING_JOURNEYS':
+          await this.handleShowingJourneys(ctx, input, message, reply, replyWithButtons, connector!);
+          break;
+        case 'TRACKING_JOURNEY':
+          await replyWithButtons(s.whatToDo.trim(), [
+            [{ text: s.cancelJourney, data: 'journey_cancel' }],
+            [{ text: s.mainMenu, data: 'main_menu' }],
+          ]);
+          break;
         default:
           await this.saveContext(message, INITIAL_CONTEXT);
           await reply(s.somethingWentWrong);
@@ -433,14 +570,7 @@ export class FlowEngine {
         await this.handleQuickRoute(ctx, quickMatch[1], quickMatch[2], msg, reply, replyWithButtons);
         return;
       }
-      await replyWithButtons(
-        s.welcomeMessage,
-        [[
-          { text: s.bookARide, data: 'book' },
-          { text: s.trackRide, data: 'status' },
-          { text: s.chooseLanguage, data: 'choose_language' },
-        ]]
-      );
+      await replyWithButtons(s.welcomeMessage, this.menuButtons(s, true));
       return;
     }
 
@@ -702,11 +832,17 @@ export class FlowEngine {
     reply: (txt: string) => Promise<void>,
     replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
   ) {
-    // If user triggered "track" before auth, honour that now
+    // If user triggered "track" or "ticket" before auth, honour that now
     if (ctx.pendingAction === 'status') {
       ctx.pendingAction = undefined;
       await this.saveContext(msg, ctx);
       await this.handleStatus(ctx, msg, reply, replyWithButtons);
+      return;
+    }
+    if (ctx.pendingAction === 'transit') {
+      ctx.pendingAction = undefined;
+      await this.saveContext(msg, ctx);
+      await this.startTransitBooking(ctx, msg, reply, replyWithButtons);
       return;
     }
 
@@ -1251,7 +1387,14 @@ export class FlowEngine {
       console.warn(`[history] failed: ${err.message}`);
     }
 
-    await replyWithButtons(s.availableRidesForRoute, allRideButtons);
+    // Offer public transport alongside the taxi estimates. The journey search
+    // only runs if the user actually taps this, so we never fire a second
+    // search behind their back.
+    const rideButtons = config.multimodalEnabled
+      ? [...allRideButtons, [{ text: s.transitOptionsLabel, data: 'show_journeys' }]]
+      : allRideButtons;
+
+    await replyWithButtons(s.availableRidesForRoute, rideButtons);
   }
 
   private buildQuickPicksFromHistory(
@@ -1689,13 +1832,7 @@ export class FlowEngine {
   ) {
     const ctx = await this.getContext(msg);
     const s = t(ctx.language);
-    await replyWithButtons(
-      `${prefix}${s.whatToDo}`,
-      [[
-        { text: s.bookARide, data: 'book' },
-        { text: s.trackRide, data: 'status' },
-      ]]
-    );
+    await replyWithButtons(`${prefix}${s.whatToDo}`, this.menuButtons(s));
   }
 
   private async resetContext(msg: CommandMessage): Promise<void> {
@@ -1818,6 +1955,709 @@ export class FlowEngine {
     try { ctx.savedLocations = await client.getSavedLocations(); } catch {}
     await this.tokenStore.updateLocations(this.scopedUserKey(msg), ctx.savedLocations || []);
     await this.promptForOrigin(ctx, msg, reply, replyWithButtons);
+  }
+
+  // --- Transit ticketing (FRFS) ---
+
+  /** Entry point for the "Metro/Bus Ticket" menu item. Requires auth, then
+   *  asks which mode the user wants. */
+  private async startTransitBooking(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector?: Connector
+  ) {
+    const s = t(ctx.language);
+    if (!ctx.nyToken) {
+      // Reuse the taxi flow's auth ladder, then come back here.
+      ctx.pendingAction = 'transit';
+      await this.handleIdle(ctx, 'book', msg, reply, replyWithButtons, connector);
+      return;
+    }
+
+    ctx.state = 'CHOOSING_TRANSIT_MODE';
+    ctx.transitFrom = undefined;
+    ctx.transitTo = undefined;
+    ctx.transitStationOptions = undefined;
+    ctx.transitQuotes = undefined;
+    ctx.transitQuoteId = undefined;
+    ctx.transitBookingId = undefined;
+    ctx.transitQuantity = 1;
+    await this.saveContext(msg, ctx);
+
+    await replyWithButtons(s.chooseTransitMode, [
+      [{ text: s.transitMetro, data: 'transit_mode:METRO' }],
+      [{ text: s.transitBus, data: 'transit_mode:BUS' }],
+      [{ text: s.transitSubway, data: 'transit_mode:SUBWAY' }],
+    ]);
+  }
+
+  private async handleChoosingTransitMode(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    const match = input.match(/^transit_mode:(\w+)$/);
+    const mode = match?.[1];
+    if (!mode || !isFrfsVehicleType(mode)) {
+      await replyWithButtons(s.chooseTransitMode, [
+        [{ text: s.transitMetro, data: 'transit_mode:METRO' }],
+        [{ text: s.transitBus, data: 'transit_mode:BUS' }],
+        [{ text: s.transitSubway, data: 'transit_mode:SUBWAY' }],
+      ]);
+      return;
+    }
+
+    ctx.transitMode = mode;
+    ctx.state = 'AWAITING_TRANSIT_ORIGIN';
+    await this.saveContext(msg, ctx);
+    await reply(s.enterBoardingStation(this.modeLabel(ctx, mode)));
+  }
+
+  /** Handles both station-entry states. `which` decides where the picked
+   *  station lands and what happens next. */
+  private async handleAwaitingTransitStation(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    which: 'from' | 'to',
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    const mode = ctx.transitMode || 'METRO';
+
+    // A tap on one of the options we last offered.
+    const pick = input.match(/^station:(\d+)$/);
+    if (pick) {
+      const station = ctx.transitStationOptions?.[parseInt(pick[1], 10)];
+      if (!station) {
+        await reply(s.somethingWentWrong);
+        return;
+      }
+      if (which === 'to' && station.code === ctx.transitFrom?.code) {
+        await reply(s.sameStationChosen);
+        return;
+      }
+
+      if (which === 'from') {
+        ctx.transitFrom = station;
+        ctx.transitStationOptions = undefined;
+        ctx.state = 'AWAITING_TRANSIT_DEST';
+        await this.saveContext(msg, ctx);
+        await reply(s.enterDropStation(this.modeLabel(ctx, mode)));
+      } else {
+        ctx.transitTo = station;
+        ctx.transitStationOptions = undefined;
+        await this.saveContext(msg, ctx);
+        await this.promptForQuantity(ctx, msg, replyWithButtons);
+      }
+      return;
+    }
+
+    // Otherwise treat the text as a station name query.
+    const query = input.trim();
+    if (query.length < 2) {
+      await reply(which === 'from'
+        ? s.enterBoardingStation(this.modeLabel(ctx, mode))
+        : s.enterDropStation(this.modeLabel(ctx, mode)));
+      return;
+    }
+
+    const client = new FrfsClient(ctx.nyToken!);
+    const near = this.transitSearchCenter(ctx);
+    const merchant = this.getMerchantConfig(msg);
+
+    let stations = await client.searchStations(query, mode, near, merchant).catch((err: any) => {
+      console.warn(`[transit] station autocomplete failed: ${err.message}`);
+      return [] as FrfsStation[];
+    });
+
+    // Autocomplete can come back empty for partial names; fall back to the
+    // full city list filtered client-side before telling the user "no match".
+    if (!stations.length) {
+      const all = await client.listStations(mode, near, merchant).catch(() => [] as FrfsStation[]);
+      const q = query.toLowerCase();
+      stations = all.filter((st) => st.name.toLowerCase().includes(q));
+    }
+
+    // Never offer the boarding station again as the destination.
+    if (which === 'to' && ctx.transitFrom) {
+      stations = stations.filter((st) => st.code !== ctx.transitFrom!.code);
+    }
+
+    if (!stations.length) {
+      await reply(s.noStationsFound(query));
+      return;
+    }
+
+    const options = stations.slice(0, 10);
+    ctx.transitStationOptions = options;
+    await this.saveContext(msg, ctx);
+
+    await replyWithButtons(
+      which === 'from' ? s.selectBoardingStation : s.selectDropStation,
+      options.map((st, i) => [{
+        text: st.name.substring(0, 24),
+        data: `station:${i}`,
+        description: st.address || undefined,
+      }]),
+    );
+  }
+
+  private async promptForQuantity(
+    ctx: FlowContext, msg: CommandMessage,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    ctx.state = 'CHOOSING_TICKET_QUANTITY';
+    await this.saveContext(msg, ctx);
+
+    const rows: { text: string; data: string }[][] = [];
+    for (let n = 1; n <= MAX_TICKETS; n++) {
+      rows.push([{ text: s.ticketsCount(n), data: `qty:${n}` }]);
+    }
+    await replyWithButtons(s.chooseQuantity, rows);
+  }
+
+  private async handleChoosingQuantity(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    const tapped = input.match(/^qty:(\d+)$/);
+    // Accept a typed number too — quicker than scrolling a list on WhatsApp.
+    const quantity = tapped ? parseInt(tapped[1], 10) : parseInt(input.trim(), 10);
+
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_TICKETS) {
+      await reply(s.invalidQuantity(MAX_TICKETS));
+      return;
+    }
+
+    ctx.transitQuantity = quantity;
+    await this.saveContext(msg, ctx);
+    await this.searchAndShowFares(ctx, msg, reply, replyWithButtons);
+  }
+
+  /** Searches for a fare between the two chosen stations and shows the quote. */
+  private async searchAndShowFares(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    await reply(s.searchingTickets);
+
+    const client = new FrfsClient(ctx.nyToken!);
+    const mode = ctx.transitMode || 'METRO';
+    const quantity = ctx.transitQuantity || 1;
+
+    const { searchId, quotes: initialQuotes } = await client.search(
+      mode, ctx.transitFrom!.code, ctx.transitTo!.code, quantity,
+    );
+    ctx.transitSearchId = searchId;
+
+    // The BPP may not have responded inline; poll the quote endpoint the same
+    // way the taxi flow polls estimates.
+    let quotes = initialQuotes;
+    for (let i = 0; i < 5 && !quotes.length; i++) {
+      await sleep(2000);
+      quotes = await client.getQuotes(searchId);
+    }
+
+    if (!quotes.length) {
+      ctx.state = 'IDLE';
+      await this.saveContext(msg, ctx);
+      await this.replyWithMenu(s.noTicketsAvailable, msg, replyWithButtons);
+      return;
+    }
+
+    // Logged so the first real multi-ticket booking settles whether the quote's
+    // `price` is the order total or a per-ticket rate — the confirmed booking's
+    // own price is what the pay button and the charge use either way.
+    console.log(`[transit] quote=${quotes[0].quoteId} price=${quotes[0].price} quoteQty=${quotes[0].quantity} requestedQty=${quantity}`);
+
+    ctx.transitQuotes = quotes;
+    ctx.transitQuoteId = quotes[0].quoteId;
+    ctx.state = 'CONFIRMING_TICKET';
+    await this.saveContext(msg, ctx);
+
+    const quote = quotes[0];
+    await replyWithButtons(
+      s.ticketSummary(ctx.transitFrom!.name, ctx.transitTo!.name, quote.price, quote.quantity || quantity),
+      [
+        [{ text: s.payNow(quote.price), data: 'ticket_pay' }],
+        [{ text: s.mainMenu, data: 'main_menu' }],
+      ],
+    );
+  }
+
+  /** Confirms the quote, hands over the payment link, then polls until the
+   *  booking is issued (or fails / times out). */
+  private async bookTransitTicket(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector: Connector
+  ) {
+    const s = t(ctx.language);
+    const client = new FrfsClient(ctx.nyToken!);
+    const quoteId = ctx.transitQuoteId;
+    if (!quoteId) {
+      await reply(s.somethingWentWrong);
+      return;
+    }
+
+    let booking = await client.confirmQuote(quoteId, config.frfsMockPayment);
+    ctx.transitBookingId = booking.bookingId;
+    ctx.state = 'AWAITING_TICKET_PAYMENT';
+    await this.saveContext(msg, ctx);
+
+    console.log(`[transit] booking=${booking.bookingId} status=${booking.status} paymentStatus=${booking.paymentStatus} hasLink=${!!booking.paymentLink}`);
+
+    if (FRFS_TERMINAL_OK.has(booking.status)) {
+      await this.deliverTickets(booking, ctx, msg, reply, replyWithButtons, connector);
+      return;
+    }
+
+    if (booking.paymentLink) {
+      await this.sendPaymentLink(
+        s.payPrompt, s.payNow(booking.price), booking.paymentLink, msg, connector, reply,
+      );
+    } else if (!config.frfsMockPayment) {
+      console.warn(`[transit] booking=${booking.bookingId} has no payment link — the user cannot complete checkout from chat`);
+      await reply(s.awaitingPayment);
+    }
+
+    for (let i = 0; i < TICKET_POLL_ATTEMPTS; i++) {
+      await sleep(TICKET_POLL_INTERVAL_MS);
+
+      const freshCtx = await this.getContext(msg);
+      if (freshCtx.state === 'IDLE' || freshCtx.cancelRequested) {
+        console.log('[transit] cancel detected during payment polling, aborting');
+        return;
+      }
+
+      try {
+        booking = await client.getBooking(booking.bookingId);
+      } catch (err: any) {
+        console.warn(`[transit] status poll failed (attempt ${i + 1}): ${err.message}`);
+        continue;
+      }
+
+      if (FRFS_TERMINAL_OK.has(booking.status)) {
+        await this.deliverTickets(booking, freshCtx, msg, reply, replyWithButtons, connector);
+        return;
+      }
+      if (FRFS_TERMINAL_FAIL.has(booking.status) || booking.paymentStatus === 'FAILURE') {
+        freshCtx.state = 'IDLE';
+        await this.saveContext(msg, freshCtx);
+        await this.replyWithMenu(s.paymentFailed, msg, replyWithButtons);
+        return;
+      }
+    }
+
+    const timedOutCtx = await this.getContext(msg);
+    timedOutCtx.state = 'IDLE';
+    await this.saveContext(msg, timedOutCtx);
+    await replyWithButtons(s.paymentTimedOut, [
+      [{ text: s.myTicketsButton, data: 'my_tickets' }],
+      [{ text: s.mainMenu, data: 'main_menu' }],
+    ]);
+  }
+
+  /** Sends the confirmation summary plus one QR image per ticket. */
+  private async deliverTickets(
+    booking: FrfsBooking,
+    ctx: FlowContext,
+    msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector: Connector
+  ) {
+    const s = t(ctx.language);
+    const from = booking.stations[0]?.name || ctx.transitFrom?.name || '';
+    const to = booking.stations[booking.stations.length - 1]?.name || ctx.transitTo?.name || '';
+
+    await reply([
+      s.ticketConfirmed,
+      s.ticketSummary(from, to, booking.price, booking.quantity),
+    ].join('\n\n'));
+
+    for (const ticket of booking.tickets) {
+      const caption = [
+        s.ticketQrCaption(from, to),
+        s.ticketLabel(ticket.ticketNumber),
+        ticket.validTill ? s.ticketValidTill(formatTime(ticket.validTill)) : '',
+      ].filter(Boolean).join('\n');
+      await this.sendQr(ticket.qrData, caption, msg, connector, reply);
+    }
+
+    ctx.state = 'SHOWING_TICKETS';
+    ctx.transitBookingId = booking.bookingId;
+    await this.saveContext(msg, ctx);
+
+    await replyWithButtons(s.whatToDo.trim(), [
+      [{ text: s.cancelTicket, data: `ticket_cancel:${booking.bookingId}` }],
+      [{ text: s.mainMenu, data: 'main_menu' }],
+    ]);
+  }
+
+  /** Hands over a checkout URL. Every platform can render this as a tappable
+   *  button — WhatsApp needs the `cta_url` type since reply buttons cannot
+   *  carry URLs — and a bare link in text is the fallback. */
+  private async sendPaymentLink(
+    text: string,
+    label: string,
+    url: string,
+    msg: CommandMessage,
+    connector: Connector,
+    reply: (txt: string) => Promise<void>,
+  ): Promise<void> {
+    const chatId = this.getReplyTarget(msg, connector);
+    try {
+      if (connector instanceof TelegramConnector) {
+        await connector.sendWithUrlButton(chatId, text, label, url);
+        return;
+      }
+      if (connector instanceof WhatsAppConnector) {
+        await connector.sendWithUrlButton(chatId, text, label, url, this.getMerchantConfig(msg));
+        return;
+      }
+      if (connector instanceof SlackConnector) {
+        await connector.sendWithUrlButton(chatId, text, label, url);
+        return;
+      }
+    } catch (err: any) {
+      console.warn(`[transit] URL button failed, falling back to a plain link: ${err.message}`);
+    }
+    await reply(`${text}\n\n${url}`);
+  }
+
+  /** Renders `qrData` to a PNG and sends it as an image. Slack has no image
+   *  upload here, and rendering can fail, so both fall back to the raw code. */
+  private async sendQr(
+    qrData: string,
+    caption: string,
+    msg: CommandMessage,
+    connector: Connector,
+    reply: (txt: string) => Promise<void>,
+  ): Promise<void> {
+    const chatId = this.getReplyTarget(msg, connector);
+    try {
+      const png = await renderQrPng(qrData);
+      if (connector instanceof TelegramConnector) {
+        await connector.sendPhoto(chatId, png, caption);
+        return;
+      }
+      if (connector instanceof WhatsAppConnector) {
+        await connector.sendImage(chatId, png, caption, this.getMerchantConfig(msg));
+        return;
+      }
+    } catch (err: any) {
+      console.warn(`[transit] QR send failed, falling back to text: ${err.message}`);
+    }
+    const s = t((await this.getContext(msg)).language);
+    await reply(`${caption}\n\n${s.ticketQrFallback}\n\`${qrData}\``);
+  }
+
+  /** "My Tickets" — the user's active FRFS bookings. */
+  private async handleMyTickets(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector: Connector
+  ) {
+    const s = t(ctx.language);
+    const client = new FrfsClient(ctx.nyToken!);
+    const bookings = await client.listBookings().catch(() => [] as FrfsBooking[]);
+    const active = bookings.filter((b) => FRFS_TERMINAL_OK.has(b.status));
+
+    if (!active.length) {
+      await this.replyWithMenu(s.noActiveTickets, msg, replyWithButtons);
+      return;
+    }
+
+    const booking = active[0];
+    await this.deliverTickets(booking, ctx, msg, reply, replyWithButtons, connector);
+  }
+
+  private async cancelTransitTicket(
+    ctx: FlowContext, bookingId: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    const client = new FrfsClient(ctx.nyToken!);
+
+    const allowed = await client.canCancelBooking(bookingId).catch(() => false);
+    if (!allowed) {
+      await this.replyWithMenu(s.ticketCannotCancel, msg, replyWithButtons);
+      return;
+    }
+
+    try {
+      await client.cancelBooking(bookingId);
+      await this.resetContext(msg);
+      await this.replyWithMenu(s.ticketCancelled, msg, replyWithButtons);
+    } catch (err: any) {
+      await this.replyWithMenu(s.cancelFailed(err.message), msg, replyWithButtons);
+    }
+  }
+
+  // --- Multimodal journeys ---
+
+  /** Runs a multimodal search for the OD pair already captured by the taxi
+   *  flow and lists the journeys. Fired on demand from the estimates screen so
+   *  we never start a second search the user did not ask for. */
+  private async showJourneys(
+    ctx: FlowContext, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    if (!ctx.origin || !ctx.destination) {
+      await reply(s.somethingWentWrong);
+      return;
+    }
+
+    await reply(s.searchingTickets);
+
+    const client = new FrfsClient(ctx.nyToken!);
+    let journeys: Journey[] = [];
+    let searchId = '';
+    try {
+      const res = await client.multimodalSearch(ctx.origin, ctx.destination);
+      journeys = res.journeys;
+      searchId = res.searchId;
+    } catch (err: any) {
+      console.warn(`[journey] multimodal search failed: ${err.message}`);
+    }
+
+    // Walk-only journeys are not worth offering in a booking bot.
+    journeys = journeys.filter((j) => j.modes.some((m) => m !== 'Walk'));
+
+    if (!journeys.length) {
+      await this.replyWithMenu(s.noJourneysFound, msg, replyWithButtons);
+      return;
+    }
+
+    const top = journeys.slice(0, 3);
+    ctx.journeys = top;
+    ctx.journeySearchId = searchId;
+    ctx.state = 'SHOWING_JOURNEYS';
+    await this.saveContext(msg, ctx);
+
+    const lines = [s.journeyOptionsHeader, ''];
+    top.forEach((j, i) => {
+      lines.push(`${i + 1}. ${this.describeJourney(ctx, j)}`);
+    });
+
+    await replyWithButtons(
+      lines.join('\n'),
+      top.map((j, i) => [{
+        text: `${i + 1}. ${this.journeyModeChain(ctx, j)}`.substring(0, 24),
+        data: `journey:${i}`,
+        description: this.journeyFareLine(j),
+      }]),
+    );
+  }
+
+  private async handleShowingJourneys(
+    ctx: FlowContext, input: string, msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector: Connector
+  ) {
+    const s = t(ctx.language);
+    const match = input.match(/^journey:(\d+)$/);
+    const idx = match ? parseInt(match[1], 10) : parseInt(input, 10) - 1;
+    const journey = ctx.journeys?.[idx];
+
+    if (!journey) {
+      await reply(s.invalidChoice(ctx.journeys?.length || 0));
+      return;
+    }
+
+    await reply(s.bookingJourney);
+
+    const client = new FrfsClient(ctx.nyToken!);
+
+    // Legs arrive unpriced; wait for their fares to settle before confirming.
+    const info = await client.initiateJourneyUntilPriced(journey.journeyId);
+    const unpriced = unpricedLegs(info);
+    if (unpriced.length > 0) {
+      console.warn(`[journey] ${journey.journeyId} still unpriced on legs ${unpriced.map((l) => l.order).join(', ')} — not confirming`);
+      ctx.state = 'SHOWING_JOURNEYS';
+      await this.saveContext(msg, ctx);
+      await replyWithButtons(s.noJourneysFound, [[{ text: s.mainMenu, data: 'main_menu' }]]);
+      return;
+    }
+
+    await client.confirmJourney(journey.journeyId, info.legs);
+
+    ctx.activeJourneyId = journey.journeyId;
+    ctx.state = 'AWAITING_JOURNEY_PAYMENT';
+    await this.saveContext(msg, ctx);
+
+    const payment = await client.getJourneyPaymentStatus(journey.journeyId).catch(() => ({} as any));
+    if (payment?.paymentLink) {
+      await this.sendPaymentLink(
+        s.payPrompt,
+        s.payNow(Math.round(journey.totalMaxFare)),
+        payment.paymentLink,
+        msg, connector, reply,
+      );
+    }
+
+    // Poll booking info until every bookable leg has its ticket.
+    for (let i = 0; i < TICKET_POLL_ATTEMPTS; i++) {
+      await sleep(TICKET_POLL_INTERVAL_MS);
+
+      const freshCtx = await this.getContext(msg);
+      if (freshCtx.state === 'IDLE' || freshCtx.cancelRequested) {
+        console.log('[journey] cancel detected during polling, aborting');
+        return;
+      }
+
+      let booked: JourneyInfo;
+      try {
+        booked = await client.getJourneyBookingInfo(journey.journeyId);
+      } catch (err: any) {
+        console.warn(`[journey] booking info poll failed (attempt ${i + 1}): ${err.message}`);
+        continue;
+      }
+
+      if (booked.journeyStatus === 'CONFIRMED' || booked.journeyStatus === 'INPROGRESS') {
+        await this.deliverJourney(booked, freshCtx, msg, reply, replyWithButtons, connector);
+        return;
+      }
+      if (booked.journeyStatus === 'FAILED' || booked.journeyStatus === 'CANCELLED') {
+        freshCtx.state = 'IDLE';
+        await this.saveContext(msg, freshCtx);
+        await this.replyWithMenu(s.paymentFailed, msg, replyWithButtons);
+        return;
+      }
+    }
+
+    const timedOutCtx = await this.getContext(msg);
+    timedOutCtx.state = 'TRACKING_JOURNEY';
+    await this.saveContext(msg, timedOutCtx);
+    await replyWithButtons(s.paymentTimedOut, [[{ text: s.mainMenu, data: 'main_menu' }]]);
+  }
+
+  private async deliverJourney(
+    info: JourneyInfo,
+    ctx: FlowContext,
+    msg: CommandMessage,
+    reply: (txt: string) => Promise<void>,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>,
+    connector: Connector
+  ) {
+    const s = t(ctx.language);
+
+    const lines = [s.journeyConfirmed, '', s.journeyLegsHeader];
+    for (const leg of [...info.legs].sort((a, b) => a.order - b.order)) {
+      const parts = [this.legLabel(ctx, leg.mode)];
+      if (leg.fromName && leg.toName) parts.push(`${leg.fromName} → ${leg.toName}`);
+      if (leg.durationSeconds) parts.push(`${Math.round(leg.durationSeconds / 60)} min`);
+      lines.push(`• ${parts.join(' · ')}`);
+      if (leg.ticketNumbers?.length) {
+        lines.push(`  ${leg.ticketNumbers.map((n) => s.ticketLabel(n)).join(', ')}`);
+      }
+    }
+    await reply(lines.join('\n'));
+
+    // Journeys carry a single unified QR covering their transit legs.
+    if (info.unifiedQR) {
+      await this.sendQr(info.unifiedQR, s.journeyLegsHeader, msg, connector, reply);
+    }
+
+    ctx.state = 'TRACKING_JOURNEY';
+    ctx.activeJourneyId = info.journeyId;
+    await this.saveContext(msg, ctx);
+
+    await replyWithButtons(s.whatToDo.trim(), [
+      [{ text: s.cancelJourney, data: 'journey_cancel' }],
+      [{ text: s.mainMenu, data: 'main_menu' }],
+    ]);
+  }
+
+  private async cancelJourney(
+    ctx: FlowContext, msg: CommandMessage,
+    replyWithButtons: (txt: string, b: { text: string; data: string; description?: string }[][]) => Promise<void>
+  ) {
+    const s = t(ctx.language);
+    const client = new FrfsClient(ctx.nyToken!);
+    try {
+      // Cancelling is per leg, so a journey can come back partly cancelled.
+      // Don't report a blanket success when some legs refused.
+      const results = await client.cancelJourney(ctx.activeJourneyId!);
+      const failed = results.filter((r) => r.includes('failed') || r.includes('not cancellable'));
+      console.log(`[journey] cancel results: ${results.join('; ') || 'no cancellable legs'}`);
+
+      if (failed.length > 0 && failed.length === results.length) {
+        await this.replyWithMenu(s.cancelFailed(failed.join('; ')), msg, replyWithButtons);
+        return;
+      }
+
+      await this.resetContext(msg);
+      await this.replyWithMenu(
+        failed.length > 0 ? `${s.journeyCancelled} (${failed.join('; ')})` : s.journeyCancelled,
+        msg,
+        replyWithButtons,
+      );
+    } catch (err: any) {
+      await this.replyWithMenu(s.cancelFailed(err.message), msg, replyWithButtons);
+    }
+  }
+
+  // --- Transit helpers ---
+
+  private modeLabel(ctx: FlowContext, mode: FrfsVehicleType): string {
+    const s = t(ctx.language);
+    if (mode === 'BUS') return s.transitBus;
+    if (mode === 'SUBWAY') return s.transitSubway;
+    return s.transitMetro;
+  }
+
+  private legLabel(ctx: FlowContext, mode: string): string {
+    const s = t(ctx.language);
+    switch (mode) {
+      case 'Walk': return s.modeWalk;
+      case 'Bus': return s.modeBus;
+      case 'Taxi': return s.modeTaxi;
+      case 'Subway': return s.modeSubway;
+      default: return s.modeMetro;
+    }
+  }
+
+  private journeyModeChain(ctx: FlowContext, j: Journey): string {
+    return j.modes.map((m) => this.legLabel(ctx, m)).join(' → ');
+  }
+
+  private journeyFareLine(j: Journey): string {
+    const fare = j.totalMinFare === j.totalMaxFare
+      ? `₹${j.totalMinFare}`
+      : `₹${j.totalMinFare}–₹${j.totalMaxFare}`;
+    const mins = j.durationSeconds ? ` · ~${Math.round(j.durationSeconds / 60)} min` : '';
+    return `${fare}${mins}`;
+  }
+
+  private describeJourney(ctx: FlowContext, j: Journey): string {
+    return `${this.journeyModeChain(ctx, j)}\n   ${this.journeyFareLine(j)}`;
+  }
+
+  /** Best-known coordinate for scoping station search to the right city. */
+  private transitSearchCenter(ctx: FlowContext): { lat: number; lon: number } | undefined {
+    if (ctx.origin?.lat != null && ctx.origin?.lon != null) {
+      return { lat: ctx.origin.lat, lon: ctx.origin.lon };
+    }
+    const saved = ctx.savedLocations?.find(
+      (l) => typeof l.lat === 'number' && typeof l.lon === 'number',
+    );
+    if (saved) return { lat: saved.lat, lon: saved.lon };
+    return undefined;
   }
 
   // --- Helpers ---

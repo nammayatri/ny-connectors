@@ -116,6 +116,26 @@ export class SlackConnector implements Connector {
     await this.postSlack(chatId, { channel: chatId, text, blocks });
   }
 
+  /** A tappable link button — Block Kit buttons accept a `url` directly. */
+  async sendWithUrlButton(chatId: string, text: string, label: string, url: string): Promise<void> {
+    await this.postSlack(chatId, {
+      channel: chatId,
+      text,
+      blocks: [
+        { type: 'section', text: { type: 'mrkdwn', text } },
+        {
+          type: 'actions',
+          elements: [{
+            type: 'button',
+            text: { type: 'plain_text', text: label.substring(0, 75), emoji: true },
+            url,
+            action_id: 'open_payment_link',
+          }],
+        },
+      ],
+    });
+  }
+
   private async postSlack(chatId: string, payload: any): Promise<void> {
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
