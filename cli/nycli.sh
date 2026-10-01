@@ -757,6 +757,7 @@ cmd_cancel() {
             400)
                 err "Bad request: the estimate ID may be malformed or the request is invalid."
                 [ -n "$api_msg" ] && err "Server says: $api_msg"
+                err "Check that the estimate ID is correct and the search is still active."
                 ;;
             404)
                 err "Estimate not found: '$estimate_id' does not exist or has already expired."
@@ -765,6 +766,7 @@ cmd_cancel() {
             409)
                 err "Conflict: this estimate has already been cancelled or is in a state that cannot be cancelled."
                 [ -n "$api_msg" ] && err "Server says: $api_msg"
+                err "Run 'nycli status' to check the current ride state."
                 ;;
             *)
                 err "API error: HTTP $http_code on POST /estimate/${estimate_id}/cancelSearch"
