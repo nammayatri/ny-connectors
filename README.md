@@ -171,9 +171,11 @@ PORT=3000 HOST=0.0.0.0 npm start
 ```
 
 Endpoints:
-- **SSE**: `http://localhost:3000/sse`
-- **Messages**: `http://localhost:3000/message`
+- **Streamable HTTP** (recommended): `http://localhost:3000/mcp`
+- **Legacy SSE**: `http://localhost:3000/sse` (client posts to the `/message?sessionId=...` URL it is given)
 - **Health**: `http://localhost:3000/health`
+
+Each client connection gets its own MCP session. `get_token` returns a random session token; the real API token never leaves the server. Session tokens are held in memory, so users must re-authenticate after a server restart, and the server should run as a single replica.
 
 ### MCP Client Configuration
 
@@ -212,7 +214,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "namma-yatri": {
       "type": "http",
-      "url": "http://localhost:3000/sse"
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
@@ -239,6 +241,11 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 | `NAMMA_YATRI_API_BASE` | `https://api.sandbox.moving.tech/dev/app/v2` | API base URL |
 | `PORT` | `3000` | HTTP server port |
 | `HOST` | `0.0.0.0` | HTTP server host |
+| `ALLOWED_HOSTS` | _(unset: no check)_ | Comma-separated allowed `Host` header values (DNS rebinding protection). Set this in any deployment. |
+| `ALLOWED_ORIGINS` | _(unset: reject all)_ | Comma-separated browser origins allowed via CORS. Non-browser clients send no `Origin` and are unaffected. |
+| `TRUSTED_PROXY_HOPS` | `0` | Number of proxies appending to `X-Forwarded-For` (used for per-IP rate limiting). `0` uses the socket address. |
+| `MAX_MCP_SESSIONS` | `500` | Maximum concurrent MCP sessions |
+| `AUTH_SESSION_TTL_MS` | `604800000` (7 days) | Sliding expiry for auth session tokens |
 
 ---
 

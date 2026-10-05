@@ -2,15 +2,18 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   Tool,
+  isInitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import { promises as fs } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { createServer } from "http";
+import { createServer, IncomingMessage, ServerResponse } from "http";
+import { randomBytes, randomUUID } from "crypto";
 import { URL } from "url";
 
 // ============================================================================
@@ -24,8 +27,30 @@ const MAX_POLLING_DURATION_MS = 10000;
 // HTTP Server configuration
 const HTTP_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const HTTP_HOST = process.env.HOST || "0.0.0.0";
-const SSE_ENDPOINT = "/sse";
-const MESSAGE_ENDPOINT = "/message";
+const SSE_ENDPOINT = "/sse"; // Legacy HTTP+SSE transport
+const MESSAGE_ENDPOINT = "/message"; // Legacy HTTP+SSE transport
+const MCP_ENDPOINT = "/mcp"; // Streamable HTTP transport
+
+// Comma-separated env lists. Requests with a Host / Origin outside these lists are
+// rejected (DNS rebinding + cross-site protection). Empty ALLOWED_HOSTS = no Host check;
+// empty ALLOWED_ORIGINS = reject every browser (Origin-bearing) request.
+const parseList = (value: string | undefined): string[] =>
+  (value || "").split(",").map((s) => s.trim()).filter(Boolean);
+const ALLOWED_HOSTS = parseList(process.env.ALLOWED_HOSTS).map((h) => h.toLowerCase());
+const ALLOWED_ORIGINS = parseList(process.env.ALLOWED_ORIGINS);
+// Number of trusted proxies that append to X-Forwarded-For (e.g. 2 behind a GCP HTTP LB).
+// 0 = ignore X-Forwarded-For and use the socket address.
+const TRUSTED_PROXY_HOPS = parseInt(process.env.TRUSTED_PROXY_HOPS || "0", 10);
+
+// Limits
+const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_MCP_SESSIONS = parseInt(process.env.MAX_MCP_SESSIONS || "500", 10);
+const MCP_SESSION_IDLE_MS = 30 * 60 * 1000;
+const AUTH_SESSION_TTL_MS = parseInt(process.env.AUTH_SESSION_TTL_MS || String(7 * 24 * 60 * 60 * 1000), 10);
+const MAX_AUTH_SESSIONS = 10000;
+const HTTP_RATE_LIMIT = { limit: 300, windowMs: 60 * 1000 }; // per client IP
+const AUTH_RATE_LIMIT_PER_IP = { limit: 10, windowMs: 15 * 60 * 1000 };
+const AUTH_RATE_LIMIT_PER_MOBILE = { limit: 5, windowMs: 15 * 60 * 1000 };
 
 // Token storage configuration
 const TOKEN_STORAGE_DIR = join(homedir(), ".namma-yatri-mcp");
@@ -510,21 +535,65 @@ interface StoredToken {
 }
 
 interface SessionData {
-  realToken: string; // Deobfuscated real token
+  realToken: string; // Real Namma Yatri API token, never sent to the client
   currentSearchId: string | null;
   currentEstimateId: string | null;
+  expiresAt: number;
+}
+
+interface McpConnection {
+  transport: SSEServerTransport | StreamableHTTPServerTransport;
+  server: Server;
+  lastActivity: number;
+  keepAliveInterval?: NodeJS.Timeout;
+}
+
+/**
+ * Fixed-window rate limiter keyed by an arbitrary string (IP, mobile number, ...).
+ */
+class RateLimiter {
+  private hits: Map<string, { count: number; resetAt: number }> = new Map();
+
+  constructor(private limit: number, private windowMs: number) {}
+
+  allow(key: string): boolean {
+    const now = Date.now();
+    const entry = this.hits.get(key);
+    if (!entry || entry.resetAt <= now) {
+      this.hits.set(key, { count: 1, resetAt: now + this.windowMs });
+      return true;
+    }
+    entry.count++;
+    return entry.count <= this.limit;
+  }
+
+  sweep(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.hits) {
+      if (entry.resetAt <= now) this.hits.delete(key);
+    }
+  }
 }
 
 class NammaYatriMCPServer {
-  private server: Server;
-  // Session management: keyed by obfuscated token (what user receives)
+  // Auth sessions: keyed by the random session token handed to the client
   private sessions: Map<string, SessionData> = new Map();
-  // Active SSE connections: keyed by connection ID
-  private activeConnections: Map<string, { transport: SSEServerTransport; res: any; keepAliveInterval: NodeJS.Timeout }> = new Map();
-  private connectionCounter = 0;
+  // Active MCP transport sessions: keyed by MCP session ID
+  private mcpConnections: Map<string, McpConnection> = new Map();
+  private httpRateLimiter = new RateLimiter(HTTP_RATE_LIMIT.limit, HTTP_RATE_LIMIT.windowMs);
+  private authIpRateLimiter = new RateLimiter(AUTH_RATE_LIMIT_PER_IP.limit, AUTH_RATE_LIMIT_PER_IP.windowMs);
+  private authMobileRateLimiter = new RateLimiter(AUTH_RATE_LIMIT_PER_MOBILE.limit, AUTH_RATE_LIMIT_PER_MOBILE.windowMs);
 
   constructor() {
-    this.server = new Server(
+    console.error("[STARTUP] Initializing MCP server with session-based token management...");
+  }
+
+  /**
+   * Creates a fresh MCP Server for one client session. Each transport gets its own
+   * Server so responses can never be delivered to another client's connection.
+   */
+  private createMcpServer(clientIp: string): Server {
+    const server = new Server(
       {
         name: "ny-connectors",
         version: "1.0.0",
@@ -535,13 +604,12 @@ class NammaYatriMCPServer {
         },
       }
     );
-
-    this.setupHandlers();
-    console.error("[STARTUP] Initializing MCP server with session-based token management...");
+    this.setupHandlers(server, clientIp);
+    return server;
   }
 
-  private setupHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+  private setupHandlers(server: Server, clientIp: string): void {
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
       const tools: Tool[] = [
         {
           name: "get_token",
@@ -969,13 +1037,13 @@ class NammaYatriMCPServer {
       return { tools };
     });
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
       try {
         switch (name) {
           case "get_token":
-            return await this.handleGetToken(args as unknown as GetTokenArgs);
+            return await this.handleGetToken(args as unknown as GetTokenArgs, clientIp);
 
           case "get_places":
             return await this.handleGetPlaces(args as unknown as GetPlacesArgs);
@@ -1074,10 +1142,25 @@ class NammaYatriMCPServer {
   // Tool Handlers
   // ============================================================================
 
-  private async handleGetToken(args: GetTokenArgs) {
+  private async handleGetToken(args: GetTokenArgs, clientIp: string) {
+    const mobileNumber = String(args.mobileNumber ?? "").replace(/[\s-]/g, "");
+    const accessCode = String(args.accessCode ?? "");
+    if (!/^\+?\d{6,15}$/.test(mobileNumber)) {
+      throw new Error("Invalid mobile number.");
+    }
+    if (!accessCode || accessCode.length > 128) {
+      throw new Error("Invalid access code.");
+    }
+
+    // Throttle credential attempts per caller and per target mobile number
+    if (!this.authIpRateLimiter.allow(clientIp) || !this.authMobileRateLimiter.allow(mobileNumber)) {
+      console.error(`[AUTH] Rate limit hit for get_token (ip=${clientIp})`);
+      throw new Error("Too many authentication attempts. Please wait 15 minutes and try again.");
+    }
+
     const request: GetTokenRequest = {
-      appSecretCode: args.accessCode,
-      userMobileNo: `${args.mobileNumber}`,
+      appSecretCode: accessCode,
+      userMobileNo: mobileNumber,
     };
 
     const response = await this.makeApiCall<GetTokenResponse>(
@@ -1087,20 +1170,13 @@ class NammaYatriMCPServer {
       false
     );
 
-    // Store token securely and create session
-    console.error("[AUTH] Response: ", response);
+    // Store the real token server-side; the client only gets a random session token
     let obfuscatedToken: string | undefined;
     if (response.token) {
-      const realToken = response.token;
-
-      // Obfuscate token for user
-      obfuscatedToken = this.obfuscateToken(realToken);
-
-      // Create session with real token
-      this.createSession(obfuscatedToken, realToken);
-
-      console.error("[AUTH] Token obfuscated and session created");
-      console.error(`[AUTH] Obfuscated token (use this in future calls): ${obfuscatedToken.substring(0, 20)}...`);
+      obfuscatedToken = this.createSession(response.token);
+      console.error("[AUTH] Authentication succeeded, session created");
+    } else {
+      console.error("[AUTH] Authentication response did not include a token");
     }
 
     // Fetch saved locations immediately after authentication
@@ -1443,7 +1519,7 @@ class NammaYatriMCPServer {
 
     // Store searchId in session
     session.currentSearchId = searchResponse.searchId;
-    console.error(`[SESSION] Search initiated with ID: ${session.currentSearchId} for token ${args.token.substring(0, 10)}...`);
+    console.error(`[SESSION] Search initiated with ID: ${session.currentSearchId}`);
 
     // Poll for results
     const results = await this.pollSearchResults(searchResponse.searchId, args.token);
@@ -1487,7 +1563,7 @@ class NammaYatriMCPServer {
     };
 
     await this.makeApiCall(
-      `/estimate/${args.estimateId}/select2`,
+      `/estimate/${encodeURIComponent(args.estimateId)}/select2`,
       "POST",
       request,
       true,
@@ -1535,7 +1611,7 @@ class NammaYatriMCPServer {
     };
 
     await this.makeApiCall(
-      `/estimate/${args.primaryEstimateId}/select2`,
+      `/estimate/${encodeURIComponent(args.primaryEstimateId)}/select2`,
       "POST",
       request,
       true,
@@ -1658,7 +1734,7 @@ class NammaYatriMCPServer {
 
     try {
       const response = await this.makeApiCall<{ success?: boolean; message?: string; error?: string }>(
-        `/estimate/${args.estimateId}/cancelSearch`,
+        `/estimate/${encodeURIComponent(args.estimateId)}/cancelSearch`,
         "POST",
         {},
         true,
@@ -1905,7 +1981,7 @@ class NammaYatriMCPServer {
     this.ensureAuthenticated(args.token);
 
     const response = await this.makeApiCall<CancellationReasonAPIEntity[]>(
-      `/cancellationReason/list?cancellationStage=${args.cancellationStage}`,
+      `/cancellationReason/list?cancellationStage=${encodeURIComponent(args.cancellationStage)}`,
       "GET",
       undefined,
       true,
@@ -1960,7 +2036,7 @@ class NammaYatriMCPServer {
     }
 
     const response = await this.makeApiCall<{ result?: string }>(
-      `/rideBooking/${args.bookingId}/cancel`,
+      `/rideBooking/${encodeURIComponent(args.bookingId)}/cancel`,
       "POST",
       request,
       true,
@@ -1992,7 +2068,7 @@ class NammaYatriMCPServer {
     this.ensureAuthenticated(args.token);
 
     const response = await this.makeApiCall<BookingStatusAPIEntity>(
-      `/rideBooking/v2/${args.bookingId}`,
+      `/rideBooking/v2/${encodeURIComponent(args.bookingId)}`,
       "GET",
       undefined,
       true,
@@ -2013,7 +2089,7 @@ class NammaYatriMCPServer {
     this.ensureAuthenticated(args.token);
 
     const response = await this.makeApiCall<GetRideStatusResponse>(
-      `/ride/${args.rideId}/status`,
+      `/ride/${encodeURIComponent(args.rideId)}/status`,
       "GET",
       undefined,
       true,
@@ -2069,7 +2145,7 @@ class NammaYatriMCPServer {
     };
 
     const response = await this.makeApiCall<{ result?: string }>(
-      `/payment/${args.rideId}/addTip`,
+      `/payment/${encodeURIComponent(args.rideId)}/addTip`,
       "POST",
       request,
       true,
@@ -2101,7 +2177,7 @@ class NammaYatriMCPServer {
     this.ensureAuthenticated(args.token);
 
     const response = await this.makeApiCall<QuoteBreakupRes>(
-      `/priceBreakup?bookingId=${args.bookingId}`,
+      `/priceBreakup?bookingId=${encodeURIComponent(args.bookingId)}`,
       "GET",
       undefined,
       true,
@@ -2175,22 +2251,15 @@ class NammaYatriMCPServer {
   ): Promise<T> {
     const url = `${NAMMA_YATRI_API_BASE}${endpoint}`;
     
-    // Log API call details
-    console.error(`[API] ${method} ${url}`);
-    if (body && method === "POST") {
-      console.error(`[API] Request body: ${JSON.stringify(body, null, 2)}`);
-    }
+    // Log only method and endpoint: bodies and headers carry credentials and PII
+    console.error(`[API] ${method} ${endpoint}`);
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
 
     if (requireAuth && obfuscatedToken) {
-      const realToken = this.getRealToken(obfuscatedToken);
-      headers["token"] = realToken;
-      console.error(`[API] Using authentication token: ${realToken.substring(0, 20)}...`);
-    } else if (!requireAuth) {
-      console.error(`[API] No authentication required for this endpoint`);
+      headers["token"] = this.getRealToken(obfuscatedToken);
     }
 
     const options: RequestInit = {
@@ -2223,8 +2292,9 @@ class NammaYatriMCPServer {
 
       let errorMessage = `API call failed: ${response.status} ${response.statusText} - ${errorDetails}`;
       
-      // For 401 errors, add instructions to clear the local token file
+      // For 401 errors, drop the server-side session and tell the client to clear its token file
       if (response.status === 401) {
+        if (obfuscatedToken) this.sessions.delete(obfuscatedToken);
         const tokenFile = "~/.namma-yatri-mcp/user-token.json";
         errorMessage += `\n\nAUTHENTICATION ERROR (401): The token has expired or is invalid.`;
         errorMessage += `\nACTION REQUIRED: Use your file capabilities to delete the local token file at: ${tokenFile}`;
@@ -2251,7 +2321,7 @@ class NammaYatriMCPServer {
 
     while (Date.now() < maxEndTime) {
       const results = await this.makeApiCall<SearchResultsResponse>(
-        `/rideSearch/${searchId}/results`,
+        `/rideSearch/${encodeURIComponent(searchId)}/results`,
         "GET",
         undefined,
         true,
@@ -2281,155 +2351,18 @@ class NammaYatriMCPServer {
   }
 
   async start(): Promise<void> {
-    const httpServer = createServer(async (req, res) => {
-      const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-      
-      // Handle CORS
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
-      if (req.method === "OPTIONS") {
-        res.writeHead(200).end();
-        return;
-      }
-
-      // SSE endpoint - establish SSE connection
-      if (req.method === "GET" && url.pathname === SSE_ENDPOINT) {
-        const connectionId = `conn_${++this.connectionCounter}_${Date.now()}`;
-        console.error(`[HTTP] SSE connection request from ${req.headers.host || "unknown"} (connection: ${connectionId})`);
-        
-        // Set SSE headers
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
-        
-        // Set keep-alive timeout (30 seconds between heartbeats)
-        const KEEP_ALIVE_INTERVAL = 25000; // 25 seconds
-        
-        const transport = new SSEServerTransport(MESSAGE_ENDPOINT, res, {
-          enableDnsRebindingProtection: false, // Set to true and configure allowedHosts/allowedOrigins for production
-        });
-        
-        // Setup keep-alive heartbeat
-        const keepAliveInterval = setInterval(() => {
-          try {
-            if (!res.destroyed && !res.closed) {
-              res.write(": keepalive\n\n");
-            } else {
-              clearInterval(keepAliveInterval);
-            }
-          } catch (error) {
-            console.error(`[HTTP] Keep-alive error for ${connectionId}:`, error);
-            clearInterval(keepAliveInterval);
-          }
-        }, KEEP_ALIVE_INTERVAL);
-        
-        // Store connection
-        this.activeConnections.set(connectionId, { transport, res, keepAliveInterval });
-        
-        // Handle connection close/error
-        req.on("close", () => {
-          console.error(`[HTTP] SSE connection closed for ${connectionId}`);
-          this.cleanupConnection(connectionId);
-        });
-        
-        req.on("error", (error) => {
-          console.error(`[HTTP] SSE connection error for ${connectionId}:`, error);
-          this.cleanupConnection(connectionId);
-        });
-        
-        res.on("close", () => {
-          console.error(`[HTTP] SSE response closed for ${connectionId}`);
-          this.cleanupConnection(connectionId);
-        });
-        
-        res.on("error", (error) => {
-          console.error(`[HTTP] SSE response error for ${connectionId}:`, error);
-          this.cleanupConnection(connectionId);
-        });
-        
-        try {
-          // Note: connect() automatically calls start(), so we don't need to call start() again
-          await this.server.connect(transport);
-          console.error(`[HTTP] SSE connection established for ${connectionId}`);
-        } catch (error) {
-          console.error(`[HTTP] Error establishing SSE connection for ${connectionId}:`, error);
-          this.cleanupConnection(connectionId);
-          if (!res.headersSent) {
-            res.writeHead(500).end("Connection error");
-          }
+    const httpServer = createServer((req, res) => {
+      this.handleHttpRequest(req, res).catch((error) => {
+        console.error(`[HTTP] Unhandled request error: ${(error as Error).message}`);
+        if (!res.headersSent) {
+          this.sendJson(res, 500, { error: "Internal server error" });
         }
-        return;
-      }
-
-      // Message endpoint - handle POST messages
-      if (req.method === "POST" && url.pathname.startsWith(MESSAGE_ENDPOINT)) {
-        // Try to find an active connection
-        // If multiple connections exist, use the most recent one
-        const connections = Array.from(this.activeConnections.values());
-        if (connections.length === 0) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "SSE connection not established" }));
-          return;
-        }
-
-        // Use the most recent connection (last one in the map)
-        const { transport } = connections[connections.length - 1];
-
-        try {
-          // Read request body
-          let body = "";
-          for await (const chunk of req) {
-            body += chunk.toString();
-          }
-          
-          let parsedBody;
-          try {
-            parsedBody = JSON.parse(body);
-          } catch {
-            parsedBody = body;
-          }
-
-          await transport.handlePostMessage(req, res, parsedBody);
-        } catch (error) {
-          console.error(`[HTTP] Error handling POST message: ${(error as Error).message}`);
-          if (!res.headersSent) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Internal server error" }));
-          }
-        }
-        return;
-      }
-
-      // Health check endpoint
-      if (req.method === "GET" && url.pathname === "/health") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", service: "ny-connectors" }));
-        return;
-      }
-
-      // 404 for other routes
-      res.writeHead(404).end("Not found");
-    });
-
-    return new Promise((resolve, reject) => {
-      httpServer.listen(HTTP_PORT, HTTP_HOST, () => {
-        console.error(`[HTTP] Namma Yatri MCP Server running on http://${HTTP_HOST}:${HTTP_PORT}`);
-        console.error(`[HTTP] SSE endpoint: http://${HTTP_HOST}:${HTTP_PORT}${SSE_ENDPOINT}`);
-        console.error(`[HTTP] Message endpoint: http://${HTTP_HOST}:${HTTP_PORT}${MESSAGE_ENDPOINT}`);
-        console.error(`[HTTP] Health check: http://${HTTP_HOST}:${HTTP_PORT}/health`);
-        resolve();
-      });
-
-      httpServer.on("error", (error) => {
-        console.error("[HTTP] Server error:", error);
-        reject(error);
       });
     });
 
-    // Graceful shutdown
+    // Periodic cleanup of idle MCP sessions, expired auth sessions and rate-limit windows
+    setInterval(() => this.sweep(), 60 * 1000).unref();
+
     process.on("SIGTERM", () => {
       console.error("[HTTP] SIGTERM received, shutting down gracefully...");
       this.shutdown();
@@ -2439,12 +2372,272 @@ class NammaYatriMCPServer {
       console.error("[HTTP] SIGINT received, shutting down gracefully...");
       this.shutdown();
     });
+
+    if (ALLOWED_HOSTS.length === 0) {
+      console.error("[STARTUP] WARNING: ALLOWED_HOSTS is not set; Host header validation is disabled");
+    }
+
+    return new Promise((resolve, reject) => {
+      httpServer.listen(HTTP_PORT, HTTP_HOST, () => {
+        console.error(`[HTTP] Namma Yatri MCP Server running on http://${HTTP_HOST}:${HTTP_PORT}`);
+        console.error(`[HTTP] Streamable HTTP endpoint: http://${HTTP_HOST}:${HTTP_PORT}${MCP_ENDPOINT}`);
+        console.error(`[HTTP] Legacy SSE endpoint: http://${HTTP_HOST}:${HTTP_PORT}${SSE_ENDPOINT}`);
+        console.error(`[HTTP] Health check: http://${HTTP_HOST}:${HTTP_PORT}/health`);
+        resolve();
+      });
+
+      httpServer.on("error", (error) => {
+        console.error("[HTTP] Server error:", error);
+        reject(error);
+      });
+    });
+  }
+
+  private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url || "/", "http://localhost");
+
+    // Health check is exempt from Host checks so kube probes (which use the pod IP) work
+    if (req.method === "GET" && url.pathname === "/health") {
+      this.sendJson(res, 200, { status: "ok", service: "ny-connectors" });
+      return;
+    }
+
+    if (!this.isHostAllowed(req.headers.host)) {
+      this.sendJson(res, 403, { error: "Host not allowed" });
+      return;
+    }
+
+    // Browser requests must come from an allowlisted origin; non-browser MCP clients send no Origin
+    const origin = req.headers.origin;
+    if (origin) {
+      if (!ALLOWED_ORIGINS.includes(origin)) {
+        this.sendJson(res, 403, { error: "Origin not allowed" });
+        return;
+      }
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID"
+      );
+      res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    }
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204).end();
+      return;
+    }
+
+    const clientIp = this.getClientIp(req);
+    if (!this.httpRateLimiter.allow(clientIp)) {
+      res.setHeader("Retry-After", "60");
+      this.sendJson(res, 429, { error: "Too many requests" });
+      return;
+    }
+
+    if (url.pathname === MCP_ENDPOINT) {
+      await this.handleStreamableHttp(req, res, clientIp);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === SSE_ENDPOINT) {
+      await this.handleLegacySseConnect(req, res, clientIp);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === MESSAGE_ENDPOINT) {
+      await this.handleLegacySseMessage(req, res, url);
+      return;
+    }
+
+    res.writeHead(404).end("Not found");
+  }
+
+  /**
+   * Streamable HTTP transport: one transport + Server per MCP session, routed by Mcp-Session-Id.
+   */
+  private async handleStreamableHttp(req: IncomingMessage, res: ServerResponse, clientIp: string): Promise<void> {
+    const sessionIdHeader = req.headers["mcp-session-id"];
+    const sessionId = Array.isArray(sessionIdHeader) ? sessionIdHeader[0] : sessionIdHeader;
+
+    if (req.method !== "GET" && req.method !== "POST" && req.method !== "DELETE") {
+      res.writeHead(405, { Allow: "GET, POST, DELETE" }).end();
+      return;
+    }
+
+    const body = req.method === "POST" ? await this.readJsonBody(req, res) : undefined;
+    if (body === null) return; // readJsonBody already responded
+
+    if (sessionId) {
+      const connection = this.mcpConnections.get(sessionId);
+      if (!connection || !(connection.transport instanceof StreamableHTTPServerTransport)) {
+        this.sendJsonRpcError(res, 404, "Session not found");
+        return;
+      }
+      connection.lastActivity = Date.now();
+      await connection.transport.handleRequest(req, res, body);
+      return;
+    }
+
+    if (req.method !== "POST" || !isInitializeRequest(body)) {
+      this.sendJsonRpcError(res, 400, "Bad Request: missing Mcp-Session-Id header");
+      return;
+    }
+
+    if (this.mcpConnections.size >= MAX_MCP_SESSIONS) {
+      this.sendJsonRpcError(res, 503, "Server is at capacity, please retry later");
+      return;
+    }
+
+    const server = this.createMcpServer(clientIp);
+    const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (newSessionId) => {
+        this.mcpConnections.set(newSessionId, { transport, server, lastActivity: Date.now() });
+        console.error(`[HTTP] MCP session initialized: ${newSessionId}`);
+      },
+    });
+    transport.onclose = () => {
+      if (transport.sessionId) this.removeConnection(transport.sessionId);
+    };
+
+    await server.connect(transport);
+    await transport.handleRequest(req, res, body);
+  }
+
+  /**
+   * Legacy HTTP+SSE transport: one transport + Server per SSE stream. The client posts to
+   * /message?sessionId=<id>, and messages are routed only to that session's transport.
+   */
+  private async handleLegacySseConnect(req: IncomingMessage, res: ServerResponse, clientIp: string): Promise<void> {
+    if (this.mcpConnections.size >= MAX_MCP_SESSIONS) {
+      this.sendJson(res, 503, { error: "Server is at capacity, please retry later" });
+      return;
+    }
+
+    res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+
+    const server = this.createMcpServer(clientIp);
+    const transport = new SSEServerTransport(MESSAGE_ENDPOINT, res);
+    const sessionId = transport.sessionId;
+
+    const keepAliveInterval = setInterval(() => {
+      if (!res.destroyed && !res.writableEnded) {
+        res.write(": keepalive\n\n");
+      } else {
+        clearInterval(keepAliveInterval);
+      }
+    }, 25000);
+
+    this.mcpConnections.set(sessionId, { transport, server, lastActivity: Date.now(), keepAliveInterval });
+    transport.onclose = () => this.removeConnection(sessionId);
+    res.on("close", () => this.removeConnection(sessionId));
+
+    try {
+      // connect() calls transport.start(), which writes the SSE headers and endpoint event
+      await server.connect(transport);
+      console.error(`[HTTP] SSE session established: ${sessionId}`);
+    } catch (error) {
+      console.error(`[HTTP] Error establishing SSE session ${sessionId}: ${(error as Error).message}`);
+      this.removeConnection(sessionId);
+      if (!res.headersSent) {
+        res.writeHead(500).end("Connection error");
+      }
+    }
+  }
+
+  private async handleLegacySseMessage(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    const sessionId = url.searchParams.get("sessionId");
+    const connection = sessionId ? this.mcpConnections.get(sessionId) : undefined;
+    if (!connection || !(connection.transport instanceof SSEServerTransport)) {
+      this.sendJson(res, 404, { error: "Session not found" });
+      return;
+    }
+
+    const body = await this.readJsonBody(req, res);
+    if (body === null) return;
+
+    connection.lastActivity = Date.now();
+    await connection.transport.handlePostMessage(req, res, body);
+  }
+
+  private isHostAllowed(hostHeader: string | undefined): boolean {
+    if (ALLOWED_HOSTS.length === 0) return true;
+    if (!hostHeader) return false;
+    const host = hostHeader.toLowerCase();
+    const hostname = host.replace(/:\d+$/, "");
+    return ALLOWED_HOSTS.includes(host) || ALLOWED_HOSTS.includes(hostname);
+  }
+
+  private getClientIp(req: IncomingMessage): string {
+    if (TRUSTED_PROXY_HOPS > 0) {
+      const forwarded = req.headers["x-forwarded-for"];
+      const value = Array.isArray(forwarded) ? forwarded.join(",") : forwarded;
+      if (value) {
+        // Each trusted proxy appends one entry, so the client is TRUSTED_PROXY_HOPS from the right.
+        // Entries further left are client-controlled and must not be trusted.
+        const hops = value.split(",").map((s) => s.trim()).filter(Boolean);
+        const candidate = hops[hops.length - TRUSTED_PROXY_HOPS];
+        if (candidate) return candidate;
+      }
+    }
+    return req.socket.remoteAddress || "unknown";
+  }
+
+  /**
+   * Reads and parses a JSON request body with a size cap. Returns null (after sending
+   * an error response) if the body is too large or not valid JSON.
+   */
+  private async readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<unknown | null> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req) {
+      size += (chunk as Buffer).length;
+      if (size > MAX_BODY_BYTES) {
+        this.sendJsonRpcError(res, 413, "Request body too large");
+        req.destroy();
+        return null;
+      }
+      chunks.push(chunk as Buffer);
+    }
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      this.sendJsonRpcError(res, 400, "Parse error: invalid JSON", -32700);
+      return null;
+    }
+  }
+
+  private sendJson(res: ServerResponse, status: number, payload: unknown): void {
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(payload));
+  }
+
+  private sendJsonRpcError(res: ServerResponse, status: number, message: string, code: number = -32000): void {
+    this.sendJson(res, status, { jsonrpc: "2.0", error: { code, message }, id: null });
+  }
+
+  private sweep(): void {
+    const now = Date.now();
+    for (const [sessionId, connection] of this.mcpConnections) {
+      if (now - connection.lastActivity > MCP_SESSION_IDLE_MS) {
+        console.error(`[HTTP] Closing idle MCP session ${sessionId}`);
+        this.removeConnection(sessionId);
+      }
+    }
+    for (const [token, session] of this.sessions) {
+      if (session.expiresAt <= now) this.sessions.delete(token);
+    }
+    this.httpRateLimiter.sweep();
+    this.authIpRateLimiter.sweep();
+    this.authMobileRateLimiter.sweep();
   }
 
   private shutdown(): void {
-    console.error(`[HTTP] Closing ${this.activeConnections.size} active connections...`);
-    for (const connectionId of this.activeConnections.keys()) {
-      this.cleanupConnection(connectionId);
+    console.error(`[HTTP] Closing ${this.mcpConnections.size} active MCP sessions...`);
+    for (const sessionId of Array.from(this.mcpConnections.keys())) {
+      this.removeConnection(sessionId);
     }
     process.exit(0);
   }
@@ -2453,121 +2646,68 @@ class NammaYatriMCPServer {
   // Connection Management
   // ============================================================================
 
-  private cleanupConnection(connectionId: string): void {
-    const connection = this.activeConnections.get(connectionId);
-    if (connection) {
-      clearInterval(connection.keepAliveInterval);
-      try {
-        if (!connection.res.destroyed && !connection.res.closed) {
-          connection.res.end();
-        }
-      } catch (error) {
-        // Ignore errors when closing
-      }
-      this.activeConnections.delete(connectionId);
-      console.error(`[HTTP] Cleaned up connection ${connectionId}`);
-    }
+  private removeConnection(sessionId: string): void {
+    const connection = this.mcpConnections.get(sessionId);
+    if (!connection) return;
+    // Delete first: closing the transport fires onclose, which calls back into here
+    this.mcpConnections.delete(sessionId);
+    if (connection.keepAliveInterval) clearInterval(connection.keepAliveInterval);
+    connection.server.close().catch(() => {
+      // Ignore errors when closing
+    });
+    console.error(`[HTTP] Cleaned up MCP session ${sessionId}`);
   }
 
   // ============================================================================
-  // Token Obfuscation/Deobfuscation
+  // Auth Sessions
   // ============================================================================
 
   /**
-   * Obfuscates token: every 3rd element swapped with 1st, add random alphanumeric every 4th place
-   * Process: group chars in 3s, swap 1st and 3rd in each group, then insert random char every 4th position
+   * Stores the real API token server-side and returns a random, unguessable session
+   * token for the client. The session token carries no information about the real token.
    */
-  private obfuscateToken(input: string): string {
-    let out = '';
-    const len = input.length;
-    let i = 0;
-    for (; i + 3 <= len; i += 3) {
-      const a = input[i];
-      const b = input[i + 1];
-      const c = input[i + 2];
-      // swap 1st and 3rd => [c, b, a]
-      out += c + b + a;
-      // insert random alphanumeric filler
-      out += this.getRandomAlphanumeric();
+  private createSession(realToken: string): string {
+    if (this.sessions.size >= MAX_AUTH_SESSIONS) {
+      // Map preserves insertion order, so the first key is the oldest session
+      const oldest = this.sessions.keys().next().value;
+      if (oldest !== undefined) this.sessions.delete(oldest);
     }
-    // append remainder (0,1 or 2 chars) as-is
-    if (i < len) out += input.slice(i);
-    return out;
-  }
-
-  /**
-   * Deobfuscates token: reverses the obfuscation process
-   * Step 1: Remove random chars (every 4th position)
-   * Step 2: Reverse swap (swap 1st and 3rd back in groups of 3)
-   */
-  private deobfuscateTokenSimple(obf: string): string {
-    let out = '';
-    const len = obf.length;
-    let i = 0;
-    // While we have at least 4 characters (3 obf + 1 filler)
-    while (i + 4 <= len) {
-      const c0 = obf[i];     // was original index 2
-      const c1 = obf[i + 1]; // was original index 1
-      const c2 = obf[i + 2]; // was original index 0
-      // reverse swap: original = c2 + c1 + c0
-      out += c2 + c1 + c0;
-      // skip filler char at i+3
-      i += 4;
-    }
-    // Append any trailing remainder (1 or 2 chars that were left untouched)
-    if (i < len) out += obf.slice(i);
-    return out;
-  }
-
-  /**
-   * Generates random alphanumeric character
-   */
-  private getRandomAlphanumeric(): string {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    return chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-
-  /**
-   * Gets or creates session data for an obfuscated token
-   */
-  private getSession(obfuscatedToken: string): SessionData | null {
-    return this.sessions.get(obfuscatedToken) || null;
-  }
-
-  /**
-   * Creates a new session with obfuscated token
-   */
-  private createSession(obfuscatedToken: string, realToken: string): SessionData {
-    const session: SessionData = {
+    const sessionToken = `nys_${randomBytes(32).toString("base64url")}`;
+    this.sessions.set(sessionToken, {
       realToken,
       currentSearchId: null,
       currentEstimateId: null,
-    };
-    this.sessions.set(obfuscatedToken, session);
+      expiresAt: Date.now() + AUTH_SESSION_TTL_MS,
+    });
+    return sessionToken;
+  }
+
+  /**
+   * Looks up a session by client session token, extending its expiry on use
+   */
+  private getSession(sessionToken: string): SessionData | null {
+    if (typeof sessionToken !== "string") return null;
+    const session = this.sessions.get(sessionToken);
+    if (!session) return null;
+    if (session.expiresAt <= Date.now()) {
+      this.sessions.delete(sessionToken);
+      return null;
+    }
+    session.expiresAt = Date.now() + AUTH_SESSION_TTL_MS;
     return session;
   }
 
   /**
-   * Gets real token from obfuscated token and ensures session exists
+   * Gets the real API token for a client session token
    */
-  private getRealToken(obfuscatedToken: string): string {
-    const session = this.getSession(obfuscatedToken);
-    if (session) {
-      return session.realToken;
+  private getRealToken(sessionToken: string): string {
+    const session = this.getSession(sessionToken);
+    if (!session) {
+      const error = new Error("Invalid or expired token. Please authenticate again.");
+      (error as any).isAuthError = true;
+      throw error;
     }
-    
-    // Try to deobfuscate (for backward compatibility or if session was lost)
-    try {
-      const realToken = this.deobfuscateTokenSimple(obfuscatedToken);
-      // Create session if deobfuscation succeeds
-      this.createSession(obfuscatedToken, realToken);
-      console.log("Real token:", realToken);
-      console.log("Obfuscated token:", obfuscatedToken);
-      return realToken;
-    } catch (error) {
-      console.error("Error deobfuscating token:", error);
-      throw new Error("Invalid or expired token. Please authenticate again." + error);
-    }
+    return session.realToken;
   }
 }
 
